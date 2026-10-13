@@ -34,7 +34,16 @@ from scipy.stats import binomtest, spearmanr
 from sklearn.metrics import classification_report, cohen_kappa_score, mean_absolute_error
 
 from ai_modules.multiprovider_agent import CognitiveAgentFactory
-from ai_modules.prompts.analyzer import CATALOGO_FEW_SHOT, INSTRUCCIONES_BASE
+
+# CORRECCIÓN: la Condición B ya no se reconstruye concatenando
+# INSTRUCCIONES_BASE + CATALOGO_FEW_SHOT a mano. Desde la corrección de
+# analyzer.py, el prompt real de pre-producción es SYSTEM_PROMPT, que
+# además del catálogo incluye el bloque de reanclaje de instrucciones
+# (REANCLAJE_INSTRUCCIONES) después del catálogo. Si este harness seguía
+# construyendo su propia versión abreviada, la prueba de calibración
+# dejaba de medir el prompt que realmente corre en producción.
+from ai_modules.prompts.analyzer import SYSTEM_PROMPT
+from ai_modules.prompts.instructions import INSTRUCCIONES_BASE
 from esquemas import AnalisisCognitivoPayload, InteraccionValidada
 
 VALIDATION_PATH = Path("data/samples/validation_ground_truth.json")
@@ -125,10 +134,18 @@ def test_catalogo_supera_linea_base_y_umbrales_de_aceptacion(
     datos_validacion: list[dict[str, Any]],
     interacciones_entrada: list[InteraccionValidada],
 ) -> None:
-    ids = sorted(item["input"]["source_id"] for item in datos_validacion)
-    y_true_sent = {d["input"]["source_id"]: d["expected_sentimiento"] for d in datos_validacion}
-    y_true_ruta = {d["input"]["source_id"]: d["expected_enrutamiento"] for d in datos_validacion}
-    y_true_rel = {d["input"]["source_id"]: d["expected_relevancia_total"] for d in datos_validacion}
+    # CORRECCIÓN: validation_ground_truth.json representa cada entrada como
+    # InteraccionValidada (campo `id`), no como MensajeAnalizado — `source_id`
+    # no existe en el `input` de este archivo y solo aparece después, en la
+    # salida del LLM. Leer aquí "source_id" sobre el input lanzaba KeyError
+    # antes de llegar a invocar al agente. Las claves de referencia se
+    # construyen con `id`; el emparejamiento contra las predicciones sigue
+    # funcionando porque, por diseño, source_id (salida) debe copiar id
+    # (entrada) sin cambios.
+    ids = sorted(item["input"]["id"] for item in datos_validacion)
+    y_true_sent = {d["input"]["id"]: d["expected_sentimiento"] for d in datos_validacion}
+    y_true_ruta = {d["input"]["id"]: d["expected_enrutamiento"] for d in datos_validacion}
+    y_true_rel = {d["input"]["id"]: d["expected_relevancia_total"] for d in datos_validacion}
 
     # --- Condición A: zero-shot (solo directivas + esquema, sin catálogo) ---
     agente_zero_shot = CognitiveAgentFactory.create_agent(
@@ -136,9 +153,10 @@ def test_catalogo_supera_linea_base_y_umbrales_de_aceptacion(
     )
     pred_a = _ejecutar_lote(agente_zero_shot, interacciones_entrada)
 
-    # --- Condición B: few-shot (directivas + catálogo calibrado) ---
+    # --- Condición B: few-shot (prompt completo de producción, catálogo +
+    #     reanclaje de instrucciones) ---
     agente_few_shot = CognitiveAgentFactory.create_agent(
-        PROVEEDOR_EVALUADO, INSTRUCCIONES_BASE + CATALOGO_FEW_SHOT, AnalisisCognitivoPayload
+        PROVEEDOR_EVALUADO, SYSTEM_PROMPT, AnalisisCognitivoPayload
     )
     pred_b = _ejecutar_lote(agente_few_shot, interacciones_entrada)
 
