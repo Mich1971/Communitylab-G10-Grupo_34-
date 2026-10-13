@@ -2,6 +2,7 @@
 Módulo de Persistencia Local (Data Engineering).
 Gestión de SQLite con esqueleto de 19 tablas, optimizado para alta concurrencia.
 """
+
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -258,70 +259,106 @@ CREATE VIEW IF NOT EXISTS vista_cola_curaduria AS
 SELECT p.run_id, p.numero_revision, p.fecha_generacion, pl.titulo AS titulo_linkedin, pl.cuerpo AS cuerpo_linkedin, rs.titular AS titular_resumen_semanal, rs.resumen AS resumen_semanal, er.estado, er.revisor, er.comentarios
 FROM paquetes_salida p JOIN estado_revision er ON p.run_id = er.run_id AND p.numero_revision = er.numero_revision LEFT JOIN post_linkedin pl ON p.run_id = pl.run_id AND p.numero_revision = pl.numero_revision LEFT JOIN resumen_semanal rs ON p.run_id = rs.run_id AND p.numero_revision = rs.numero_revision WHERE er.estado = 'pendiente';
 """
-def _configurar_conexion(conn: sqlite3.Connection) -> None:
-"""Aplica pragmas y políticas de concurrencia obligatorias por conexión."""
-conn.execute("PRAGMA foreign_keys = ON;")
-conn.execute("PRAGMA journal_mode = WAL;")
-def init_db() -> None:
-"""Inicializa la base de datos inyectando el esquema completo."""
-dir_name = os.path.dirname(DB_PATH)
-if dir_name and not os.path.exists(dir_name):
-os.makedirs(dir_name, exist_ok=True)
-with sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT_SEGUNDOS) as conn:
-_configurar_conexion(conn)
-try:
-conn.executescript(DDL_ESQUELETO)
-conn.commit()
-logger.info("database_initialized_successfully", db_path=DB_PATH, status="ready")
-except Exception as error:
-logger.error("database_initialization_failed", db_path=DB_PATH, error=str(error))
-raise error
-def registrar_lote_y_descartes(payload_lote: Dict[str, Any], rechazados: List[Dict[str, Any]], run_id: str) -> None:
-"""Registra un lote y sus descartes usando inserción masiva por lotes optimizada."""
-request_id = payload_lote.get("request_id", "desconocido")
-origen = payload_lote.get("origen_comunidad", "Desconocido")
-periodo = payload_lote.get("periodo_referencia", "Sin_Periodo")
-total_validos = len(payload_lote.get("interacciones", []))
-total_rechazados = len(rechazados)
-total_recibidos = total_validos + total_rechazados
-fecha_iso = datetime.now(timezone.utc).isoformat()
-with sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT_SEGUNDOS) as conn:
-_configurar_conexion(conn)
-cursor = conn.cursor()
-try:
-cursor.execute("""
-INSERT OR IGNORE INTO lotes_procesamiento (
-run_id, request_id, origen_comunidad, periodo_referencia,
-total_recibidos, total_validos, total_rechazados, fecha_procesamiento
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-""", (run_id, request_id, origen, periodo, total_recibidos, total_validos, total_rechazados, fecha_iso))
-if conn.changes() > 0 and rechazados:
-# OPTIMIZACIÓN: Estructurar tuplas para inserción en lote (executemany)
-bloque_rechazados: List[Tuple] = []
-for item in rechazados:
-msg_id = item.get("mensaje_id") or item.get("id")
-err_det = item.get("error_detalle") or item.get("error", "Error desconocido")
-f_aisla = item.get("fecha_aislamiento") or fecha_iso
-bloque_rechazados.append((
-run_id, request_id, msg_id,
-item.get("autor", "Anónimo"), item.get("canal", "sin_canal"),
-err_det, item.get("texto_crudo", ""), f_aisla, f_aisla
-))
-cursor.executemany("""
-INSERT INTO auditoria_rechazados (
-run_id, request_id, mensaje_id, autor, canal,
-error_detalle, texto_crudo, fecha_isolation, fecha_aislamiento
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
-""", bloque_rechazados)
-logger.info(
-"batch_and_discards_bulk_persisted",
-run_id=run_id, request_id=request_id,
-valid_count=total_validos, rejected_count=total_rechazados
-)
-else:
-logger.info("batch_registration_ignored_idempotent", run_id=run_id, request_id=request_id)
-conn.commit()
-except Exception as error:
-conn.rollback()
-logger.error("batch_persistence_transaction_failed", request_id=request_id, error=str(error))
-raise error
+
+
+def registrar_analisis_bloque(
+    analisis_cognitivo: Any, interacciones_origen: List[Any]
+) -> None:
+    """
+    Inserta en bloque y de forma atómica los resultados analíticos de la IA.
+    Aplica indexación O(1), conversión estricta de tipos y secuenciación de FKs.
+    """
+    run_id = analisis_cognitivo.run_id
+    fecha_analisis = datetime.now(timezone.utc).isoformat()
+
+    dict_origen = {int_val.id: int_val for int_val in interacciones_origen}
+
+    tuplas_mensajes = []
+    tuplas_temas = []
+    tuplas_entidades = []
+
+    for msg_ia in analisis_cognitivo.mensajes_analizados:
+        source_id = msg_ia.source_id
+        msg_origen = dict_origen.get(source_id)
+
+        if not msg_origen:
+            logger.error("error_integridad_origen", source_id=source_id, run_id=run_id)
+            continue
+
+        tuplas_mensajes.append(
+            (
+                source_id,
+                run_id,
+                msg_origen.autor,
+                msg_origen.canal,
+                msg_origen.tipo,
+                msg_origen.texto,
+                msg_ia.sentimiento,
+                msg_ia.categoria_enrutamiento,
+                msg_ia.regla_aplicada,
+                msg_ia.puntuacion_relevancia.evidencia_explicita,
+                msg_ia.puntuacion_relevancia.utilidad_comunitaria,
+                msg_ia.puntuacion_relevancia.claridad_contexto,
+                msg_ia.puntuacion_relevancia.total,
+                msg_ia.motivo_seleccion,
+                1 if msg_ia.requiere_soporte else 0,
+                1 if msg_ia.apto_para_publicacion else 0,
+                fecha_analisis,
+            )
+        )
+
+        for tema in msg_ia.temas:
+            tuplas_temas.append((source_id, tema))
+
+        for entidad in msg_ia.entidades_relevantes:
+            tuplas_entidades.append((source_id, entidad))
+
+    conn = sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT_SEGUNDOS)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+
+        cursor = conn.cursor()
+        cursor.execute("BEGIN TRANSACTION;")
+
+        if tuplas_mensajes:
+            cursor.executemany(
+                """
+                INSERT OR REPLACE INTO mensajes_analizados (
+                    source_id, run_id, autor, canal, tipo, texto_limpio, sentimiento,
+                    categoria_enrutamiento, regla_aplicada, evidencia_explicita,
+                    utilidad_comunitaria, claridad_contexto, puntuacion_total,
+                    motivo_seleccion, requiere_soporte, apto_para_publicacion, fecha_analisis
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+                tuplas_mensajes,
+            )
+
+        if tuplas_temas:
+            cursor.executemany(
+                """
+                INSERT INTO mensaje_temas (source_id, tema) VALUES (?, ?);
+            """,
+                tuplas_temas,
+            )
+
+        if tuplas_entidades:
+            cursor.executemany(
+                """
+                INSERT INTO mensaje_entidades (source_id, entidad) VALUES (?, ?);
+            """,
+                tuplas_entidades,
+            )
+
+        conn.commit()
+        logger.info(
+            "insercion_analitica_bloque_exitosa",
+            run_id=run_id,
+            registros=len(tuplas_mensajes),
+        )
+    except Exception as e:
+        conn.rollback()
+        logger.error("error_transaccion_bloque", run_id=run_id, error=str(e))
+        raise e
+    finally:
+        conn.close()
