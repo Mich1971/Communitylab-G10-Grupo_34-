@@ -8,6 +8,7 @@ vez de quedar como un valor suelto sin conectar.
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel
 
 from ai_modules.multiprovider_agent import (
     CognitiveAgentFactory,
@@ -15,7 +16,7 @@ from ai_modules.multiprovider_agent import (
 )
 
 
-class _ResultSchemaFicticio:
+class _ResultSchemaFicticio(BaseModel):
     """Placeholder de esquema Pydantic de salida; no se instancia en estas pruebas."""
 
 

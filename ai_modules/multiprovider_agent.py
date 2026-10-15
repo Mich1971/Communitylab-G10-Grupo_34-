@@ -32,8 +32,8 @@ from typing import Any
 import structlog
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.gemini import GeminiModel
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.openai import OpenAIChatModel
 
 logger = structlog.get_logger("ai_modules.cache_orchestrator")
 
@@ -83,10 +83,10 @@ class CognitiveAgentFactory:
             # Caching implícito: OpenAI detecta por sí mismo la coincidencia
             # de prefijo cuando el system_prompt es idéntico entre llamadas.
             # No existe un model_settings de caché que activar explícitamente.
-            model = OpenAIModel("gpt-4o-mini")
+            model = OpenAIChatModel("gpt-4o-mini")
             agent = Agent(
                 model=model,
-                result_type=result_schema,
+                output_type=result_schema,
                 system_prompt=static_catalog_prompt,
             )
 
@@ -100,7 +100,7 @@ class CognitiveAgentFactory:
             }
             agent = Agent(
                 model=model,
-                result_type=result_schema,
+                output_type=result_schema,
                 system_prompt=static_catalog_prompt,
                 model_settings=settings,
             )
@@ -110,10 +110,10 @@ class CognitiveAgentFactory:
             # se evita deliberadamente el recurso CachedContent explícito
             # para no introducir un cache_id que el backend tendría que
             # persistir, rompiendo el diseño sin estado del agente.
-            model = GeminiModel("gemini-1.5-flash")
+            model = GoogleModel("gemini-1.5-flash")
             agent = Agent(
                 model=model,
-                result_type=result_schema,
+                output_type=result_schema,
                 system_prompt=static_catalog_prompt,
             )
 
