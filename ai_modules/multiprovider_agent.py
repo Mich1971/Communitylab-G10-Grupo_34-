@@ -66,7 +66,7 @@ class CognitiveAgentFactory:
                 ser idéntico byte a byte entre invocaciones para que la caché
                 de cualquiera de los tres proveedores pueda acertar.
             result_schema: el modelo Pydantic de salida esperado (p. ej.
-                `AnalisisCognitivoPayload`).
+                `MensajeAnalizado`).
 
         Returns:
             Un `Agent` listo para `.run()`/`.run_sync()`, con el

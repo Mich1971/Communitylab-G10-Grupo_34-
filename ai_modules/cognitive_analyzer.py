@@ -93,13 +93,26 @@ def _resolver_proveedor(provider: str | None) -> str:
 def _crear_mensaje_degradado(source_id: str, error: Exception) -> MensajeAnalizado:
     """Fallback semántico: puntaje 0, no publicable, `source_id` intacto.
 
+    CORRECCIÓN: antes se marcaba `requiere_soporte=False` y
+    `categoria_enrutamiento="Duda"`. Con `requiere_soporte=False`, un
+    registro degradado por una falla real de inferencia quedaba invisible
+    en `ResumenComunidad.alertas_soporte` siempre que el resto del lote sí
+    se procesara con éxito (`alertas_soporte` solo se nutre de mensajes con
+    `requiere_soporte=True` — ver `_calcular_resumen_comunidad`). El único
+    caso cubierto hasta ahora era la degradación total del lote, resuelta
+    por el mensaje genérico de respaldo. Con `requiere_soporte=True`, cada
+    degradación (parcial o total) queda localizable por `source_id` en
+    `alertas_soporte` sin que un curador tenga que recalcular nada.
+    `categoria_enrutamiento="Dificultad"` refleja mejor la semántica real
+    del caso (algo falló y requiere atención) que "Duda".
+
     Solo se registra el tipo de excepción: el mensaje original podría contener
     credenciales o fragmentos del prompt (M09).
     """
     return MensajeAnalizado(
         source_id=source_id,
         sentimiento="Neutro",
-        categoria_enrutamiento="Duda",
+        categoria_enrutamiento="Dificultad",
         regla_aplicada="Degradación elegante por indisponibilidad de inferencia",
         temas=["Sin_Clasificar"],
         entidades_relevantes=[],
@@ -107,7 +120,7 @@ def _crear_mensaje_degradado(source_id: str, error: Exception) -> MensajeAnaliza
             evidencia_explicita=0, utilidad_comunitaria=0, claridad_contexto=0
         ),
         motivo_seleccion=f"{PREFIJO_DEGRADACION}: {type(error).__name__}",
-        requiere_soporte=False,
+        requiere_soporte=True,
         apto_para_publicacion=False,
     )
 
@@ -169,12 +182,34 @@ def _es_degradado(m: MensajeAnalizado) -> bool:
 def _calcular_resumen_comunidad(
     mensajes: list[MensajeAnalizado], total_recibidos_en_lote: int
 ) -> ResumenComunidad:
-    """Agregación determinista; el LLM nunca calcula estadísticas del lote."""
+    """Agregación determinista; el LLM nunca calcula estadísticas del lote.
+
+    NOTA sobre `registros_rechazados`: este módulo solo recibe
+    `InteraccionValidada` — es decir, registros que ya superaron la
+    validación estructural del Contrato 1 (eso ocurre antes, en
+    `data_pipeline.validador` / `orchestration.pipeline_runner`). Por lo
+    tanto, el único tipo de "rechazo" que puede originarse dentro de esta
+    función es la degradación por fallo de inferencia del LLM, y es ese
+    conteo el que se reporta aquí — no hay ambigüedad con un eventual
+    conteo de rechazos de validación, que vive en otra capa.
+    """
     degradados = sum(_es_degradado(m) for m in mensajes)
     conteo: dict[str, int] = dict.fromkeys(SENTIMIENTOS_OFICIALES, 0)
     for m in mensajes:
         conteo[m.sentimiento] += 1
-    moda = max(conteo, key=lambda k: conteo[k]) if mensajes else "Neutro"
+
+    # CORRECCIÓN: `max(conteo, key=...)` resolvía cualquier empate a una
+    # sola categoría (la primera en orden de iteración), nunca a "Mixto" —
+    # pese a que el propio esquema (`ResumenComunidad.sentimiento_predominante`)
+    # documenta "Mixto" como valor esperado para un lote dividido. Ahora se
+    # detecta explícitamente cuántas categorías comparten el conteo máximo.
+    if mensajes:
+        maximo = max(conteo.values())
+        categorias_en_maximo = [k for k, v in conteo.items() if v == maximo]
+        moda = categorias_en_maximo[0] if len(categorias_en_maximo) == 1 else "Mixto"
+    else:
+        moda = "Neutro"
+
     temas = [t for m in mensajes for t in m.temas]
     temas_top = [t for t, _ in Counter(temas).most_common(5)] or ["General"]
     alertas = [f"[{m.source_id}] {m.motivo_seleccion}" for m in mensajes if m.requiere_soporte]
@@ -200,11 +235,21 @@ async def analizar_lote_cognitivo(
     request_id: str,
     provider: str | None = None,
     max_concurrency: int | None = None,
+    system_prompt: str | None = None,
 ) -> AnalisisCognitivo:
     """Analiza un lote de interacciones ya validadas y devuelve el Contrato 2.
 
     `max_concurrency` y los reintentos se resuelven desde
     COGNITIVE_ANALYZER_CONCURRENCY y LLM_MAX_RETRIES si no se pasan.
+
+    `system_prompt` es opcional y por defecto usa el `SYSTEM_PROMPT` de
+    producción (instrucciones + catálogo few-shot + reanclaje). Se expone
+    como parámetro — en vez de quedar hardcodeado — únicamente para que el
+    arnés de calibración (`tests/test_calibration_eval.py`) pueda ejecutar
+    la Condición A (zero-shot, solo `INSTRUCCIONES_BASE`) y la Condición B
+    (few-shot, `SYSTEM_PROMPT`) contra la misma ruta de inferencia real que
+    corre en producción, en vez de reconstruir su propia lógica de
+    invocación por lote.
     """
     if not interacciones:
         raise ValueError("analizar_lote_cognitivo requiere al menos una interacción validada")
@@ -214,7 +259,9 @@ async def analizar_lote_cognitivo(
         "COGNITIVE_ANALYZER_CONCURRENCY", CONCURRENCIA_DEFECTO
     )
     max_reintentos = _leer_entero_env("LLM_MAX_RETRIES", MAX_REINTENTOS_DEFECTO)
-    agent = CognitiveAgentFactory.create_agent(proveedor, SYSTEM_PROMPT, MensajeAnalizado)
+    agent = CognitiveAgentFactory.create_agent(
+        proveedor, system_prompt or SYSTEM_PROMPT, MensajeAnalizado
+    )
     semaforo = asyncio.Semaphore(concurrencia)
 
     async def _procesar(i: InteraccionValidada) -> tuple[MensajeAnalizado, int]:

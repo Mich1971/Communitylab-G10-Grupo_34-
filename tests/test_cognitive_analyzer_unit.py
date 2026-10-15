@@ -67,6 +67,24 @@ class _AgenteFalso:
         return _Resultado(_mensaje("id_inventado_por_el_llm"))
 
 
+class _AgenteSegunContenido:
+    """Decide su respuesta según qué `source_id` aparece en la entrada
+    serializada, no según el orden de llamada — las interacciones se
+    procesan de forma concurrente vía `asyncio.gather`, así que depender
+    del orden de llegada sería una prueba frágil."""
+
+    def __init__(self, ids_que_fallan: set[str], error: Exception | None = None):
+        self.ids_que_fallan = ids_que_fallan
+        self.error = error or RuntimeError("503")
+        self.llamadas = 0
+
+    async def run(self, entrada, model_settings=None):
+        self.llamadas += 1
+        if any(f'"id":"{id_}"' in entrada or f'"id": "{id_}"' in entrada for id_ in self.ids_que_fallan):
+            raise self.error
+        return _Resultado(_mensaje("id_inventado_por_el_llm"))
+
+
 @pytest.fixture(autouse=True)
 def _sin_espera(monkeypatch):
     async def _nada(_):
@@ -112,11 +130,37 @@ def test_resumen_determinista():
     assert len(r.alertas_soporte) == 1 and r.alertas_soporte[0].startswith("[b]")
 
 
+def test_resumen_detecta_empate_y_reporta_mixto():
+    """CORRECCIÓN: `max(conteo, key=...)` resolvía cualquier empate a una
+    sola categoría arbitraria. El esquema documenta "Mixto" explícitamente
+    para este caso (`ResumenComunidad.sentimiento_predominante`)."""
+    msgs = [
+        _mensaje("a", "Positivo"),
+        _mensaje("b", "Dificultad/Negativo"),
+    ]
+    r = ca._calcular_resumen_comunidad(msgs, 2)
+    assert r.sentimiento_predominante == "Mixto"
+
+
+def test_resumen_sin_empate_no_reporta_mixto():
+    msgs = [
+        _mensaje("a", "Positivo"),
+        _mensaje("b", "Positivo"),
+        _mensaje("c", "Neutro"),
+    ]
+    r = ca._calcular_resumen_comunidad(msgs, 3)
+    assert r.sentimiento_predominante == "Positivo"
+
+
 def test_degradado_preserva_source_id_y_score_cero():
     m = ca._crear_mensaje_degradado("msg_009", RuntimeError("boom"))
     assert m.source_id == "msg_009"
     assert m.puntuacion_relevancia.total == 0 and not m.apto_para_publicacion
     assert "RuntimeError" in m.motivo_seleccion and "boom" not in m.motivo_seleccion
+    # CORRECCIÓN: antes requiere_soporte=False dejaba la degradación
+    # invisible en alertas_soporte salvo que degradara el 100% del lote.
+    assert m.requiere_soporte is True
+    assert m.categoria_enrutamiento == "Dificultad"
 
 
 def test_flujo_nominal_fuerza_source_id_original(monkeypatch):
@@ -147,6 +191,23 @@ def test_agotamiento_degrada_sin_romper_lote(monkeypatch):
     assert any("degradados" in a for a in r.resumen_comunidad.alertas_soporte)
 
 
+def test_degradacion_parcial_queda_visible_en_alertas_soporte(monkeypatch):
+    """Caso realista: solo uno de dos mensajes degrada. Antes de la
+    corrección, ese mensaje no aparecía en alertas_soporte porque el
+    fallback genérico solo se dispara cuando el 100% del lote degrada."""
+    agente = _AgenteSegunContenido(ids_que_fallan={"msg_001"})
+    _usar_agente(monkeypatch, agente)
+    lote = [_interaccion(1), _interaccion(2)]
+    r = asyncio.run(ca.analizar_lote_cognitivo(lote, "r", "q", provider="openai"))
+
+    assert r.resumen_comunidad.registros_validos == 1
+    assert r.resumen_comunidad.registros_rechazados == 1
+    # El mensaje degradado debe quedar localizable por source_id, no solo
+    # contabilizado en un número agregado.
+    assert any(a.startswith("[msg_001]") for a in r.resumen_comunidad.alertas_soporte)
+    assert not any("Todos los registros" in a for a in r.resumen_comunidad.alertas_soporte)
+
+
 def test_fallo_de_esquema_reintenta_a_temperatura_cero(monkeypatch):
     error = ca.UnexpectedModelBehavior("esquema inválido")
     agente = _AgenteFalso(fallos=1, error=error)
@@ -168,3 +229,35 @@ def test_resolucion_de_proveedor_y_concurrencia(monkeypatch):
 def test_lote_vacio_es_error():
     with pytest.raises(ValueError):
         asyncio.run(ca.analizar_lote_cognitivo([], "r", "q"))
+
+
+def test_system_prompt_personalizado_se_propaga_al_agente(monkeypatch):
+    """`system_prompt` debe llegar intacto a CognitiveAgentFactory.create_agent
+    — es lo que permite al arnés de calibración ejecutar la Condición A
+    (zero-shot) y la Condición B (few-shot) contra la misma ruta real de
+    inferencia, sin reconstruir su propia lógica de invocación."""
+    capturado: dict = {}
+
+    def _factory_falsa(provider, system_prompt, result_schema):
+        capturado["system_prompt"] = system_prompt
+        return _AgenteFalso()
+
+    monkeypatch.setattr(ca.CognitiveAgentFactory, "create_agent", _factory_falsa)
+    asyncio.run(
+        ca.analizar_lote_cognitivo(
+            [_interaccion(1)], "r", "q", provider="openai", system_prompt="PROMPT_DE_PRUEBA"
+        )
+    )
+    assert capturado["system_prompt"] == "PROMPT_DE_PRUEBA"
+
+
+def test_system_prompt_por_defecto_usa_system_prompt_de_produccion(monkeypatch):
+    capturado: dict = {}
+
+    def _factory_falsa(provider, system_prompt, result_schema):
+        capturado["system_prompt"] = system_prompt
+        return _AgenteFalso()
+
+    monkeypatch.setattr(ca.CognitiveAgentFactory, "create_agent", _factory_falsa)
+    asyncio.run(ca.analizar_lote_cognitivo([_interaccion(1)], "r", "q", provider="openai"))
+    assert capturado["system_prompt"] == ca.SYSTEM_PROMPT

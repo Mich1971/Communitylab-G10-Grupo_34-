@@ -24,27 +24,37 @@ Dependencias de desarrollo adicionales requeridas (agregar a
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from scipy.stats import binomtest, spearmanr
 from sklearn.metrics import classification_report, cohen_kappa_score, mean_absolute_error
 
-from ai_modules.multiprovider_agent import CognitiveAgentFactory
-
-# CORRECCIÓN: la Condición B ya no se reconstruye concatenando
-# INSTRUCCIONES_BASE + CATALOGO_FEW_SHOT a mano. Desde la corrección de
-# analyzer.py, el prompt real de pre-producción es SYSTEM_PROMPT, que
-# además del catálogo incluye el bloque de reanclaje de instrucciones
-# (REANCLAJE_INSTRUCCIONES) después del catálogo. Si este harness seguía
-# construyendo su propia versión abreviada, la prueba de calibración
-# dejaba de medir el prompt que realmente corre en producción.
+# La Condición B no se reconstruye concatenando INSTRUCCIONES_BASE +
+# CATALOGO_FEW_SHOT a mano. El prompt real de pre-producción es
+# SYSTEM_PROMPT, que además del catálogo incluye el bloque de reanclaje de
+# instrucciones (REANCLAJE_INSTRUCCIONES) después del catálogo. Si este
+# harness construyera su propia versión abreviada, la prueba de
+# calibración dejaría de medir el prompt que realmente corre en
+# producción.
+from ai_modules.cognitive_analyzer import analizar_lote_cognitivo
 from ai_modules.prompts.analyzer import SYSTEM_PROMPT
 from ai_modules.prompts.instructions import INSTRUCCIONES_BASE
-from esquemas import AnalisisCognitivoPayload, InteraccionValidada
+
+# CORRECCIÓN: `AnalisisCognitivoPayload` no existe en esquemas.py (el
+# contrato definitivo del equipo) — nunca existió como clase en ese
+# archivo; importarla rompía la colección de la prueba con ImportError.
+# El punto de entrada real y único para producir un lote analizado es
+# `analizar_lote_cognitivo`, que ya encapsula la resiliencia (reintentos,
+# degradación elegante, backoff) que este harness de evaluación debe medir
+# tal como corre en producción, no reimplementar invocando al agente de
+# forma directa.
+from esquemas import InteraccionValidada
 
 VALIDATION_PATH = Path("data/samples/validation_ground_truth.json")
 PROVEEDOR_EVALUADO = "openai"  # motor titular; repetir con "anthropic"/"gemini" en Fase 4
@@ -83,26 +93,45 @@ def _cargar_validacion() -> list[dict[str, Any]]:
     return datos
 
 
-def _ejecutar_lote(agent, interacciones: list[InteraccionValidada]) -> dict[str, Any]:
-    """Ejecuta el agente sobre el lote completo y devuelve las predicciones
-    indexadas por source_id.
+async def _ejecutar_condicion_async(
+    interacciones: list[InteraccionValidada], system_prompt: str
+) -> dict[str, Any]:
+    """Ejecuta `analizar_lote_cognitivo` (la misma ruta de inferencia real
+    que corre en producción, con su propia resiliencia — reintentos,
+    degradación elegante, backoff) sobre el lote completo, en la condición
+    de prompt indicada, y devuelve las predicciones indexadas por
+    `source_id`.
 
-    Deliberadamente NO se asume que el orden de salida del modelo coincide
-    con el orden de entrada: un LLM procesando un lote no garantiza
-    preservar la posición de cada elemento, así que emparejar por índice de
-    lista arriesgaría comparar predicción y referencia de mensajes distintos
-    sin que ningún error lo delate. El emparejamiento se hace por
-    `source_id`, que es el campo de trazabilidad invariable del contrato.
+    Deliberadamente NO se asume que el orden de salida coincide con el
+    orden de entrada: emparejar por índice de lista arriesgaría comparar
+    predicción y referencia de mensajes distintos sin que ningún error lo
+    delate. El emparejamiento se hace por `source_id`/`id`, el campo de
+    trazabilidad invariable del contrato.
     """
-    resultado: AnalisisCognitivoPayload = agent.run_sync(interacciones).output
+    resultado = await analizar_lote_cognitivo(
+        interacciones,
+        run_id="calibracion-eval",
+        request_id=f"calibracion-{uuid4()}",
+        provider=PROVEEDOR_EVALUADO,
+        system_prompt=system_prompt,
+    )
     por_id = {m.source_id: m for m in resultado.mensajes_analizados}
-    esperados = {i.source_id for i in interacciones}
+    # CORRECCIÓN: `InteraccionValidada` no tiene campo `source_id` (solo
+    # `id` — ver esquemas.py). Leer `i.source_id` aquí lanzaba
+    # AttributeError antes de poder evaluar la trazabilidad.
+    esperados = {i.id for i in interacciones}
     faltantes = esperados - por_id.keys()
     assert not faltantes, (
         f"Trazabilidad incompleta: {len(faltantes)} source_id del lote no "
         f"aparecen en la respuesta del modelo: {sorted(faltantes)[:5]}"
     )
     return por_id
+
+
+def _ejecutar_condicion(
+    interacciones: list[InteraccionValidada], system_prompt: str
+) -> dict[str, Any]:
+    return asyncio.run(_ejecutar_condicion_async(interacciones, system_prompt))
 
 
 def _mcnemar_p_valor(acierto_a: list[bool], acierto_b: list[bool]) -> tuple[int, int, float]:
@@ -134,11 +163,10 @@ def test_catalogo_supera_linea_base_y_umbrales_de_aceptacion(
     datos_validacion: list[dict[str, Any]],
     interacciones_entrada: list[InteraccionValidada],
 ) -> None:
-    # CORRECCIÓN: validation_ground_truth.json representa cada entrada como
-    # InteraccionValidada (campo `id`), no como MensajeAnalizado — `source_id`
-    # no existe en el `input` de este archivo y solo aparece después, en la
-    # salida del LLM. Leer aquí "source_id" sobre el input lanzaba KeyError
-    # antes de llegar a invocar al agente. Las claves de referencia se
+    # `validation_ground_truth.json` representa cada entrada como
+    # InteraccionValidada (campo `id`), no como MensajeAnalizado —
+    # `source_id` no existe en el `input` de este archivo y solo aparece
+    # después, en la salida del LLM. Las claves de referencia se
     # construyen con `id`; el emparejamiento contra las predicciones sigue
     # funcionando porque, por diseño, source_id (salida) debe copiar id
     # (entrada) sin cambios.
@@ -148,17 +176,11 @@ def test_catalogo_supera_linea_base_y_umbrales_de_aceptacion(
     y_true_rel = {d["input"]["id"]: d["expected_relevancia_total"] for d in datos_validacion}
 
     # --- Condición A: zero-shot (solo directivas + esquema, sin catálogo) ---
-    agente_zero_shot = CognitiveAgentFactory.create_agent(
-        PROVEEDOR_EVALUADO, INSTRUCCIONES_BASE, AnalisisCognitivoPayload
-    )
-    pred_a = _ejecutar_lote(agente_zero_shot, interacciones_entrada)
+    pred_a = _ejecutar_condicion(interacciones_entrada, INSTRUCCIONES_BASE)
 
     # --- Condición B: few-shot (prompt completo de producción, catálogo +
     #     reanclaje de instrucciones) ---
-    agente_few_shot = CognitiveAgentFactory.create_agent(
-        PROVEEDOR_EVALUADO, SYSTEM_PROMPT, AnalisisCognitivoPayload
-    )
-    pred_b = _ejecutar_lote(agente_few_shot, interacciones_entrada)
+    pred_b = _ejecutar_condicion(interacciones_entrada, SYSTEM_PROMPT)
 
     def alinear(pred: dict[str, Any], campo: str) -> list[Any]:
         return [getattr(pred[i], campo) for i in ids]
