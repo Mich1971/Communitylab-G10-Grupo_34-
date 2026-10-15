@@ -12,7 +12,7 @@ from pydantic import ValidationError
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from esquemas import ActivosGenerados, EstadoRevision, IngestionLote, MetadatosEjecucion, PaqueteSalida
-from validador import validar_lote_crudo
+from data_pipeline.validador import validar_lote_crudo
 from ui.mock_pipeline import analizar_mock, generar_copys_mock, generar_run_id
 from ui.storage_demo import guardar_local
 
