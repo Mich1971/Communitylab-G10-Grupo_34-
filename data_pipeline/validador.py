@@ -16,7 +16,8 @@ logger = structlog.get_logger("data_pipeline.validador")
 def adaptar_payload_oficial(payload_crudo: dict) -> dict:
     """Transforma el JSON del jurado al contrato IngestionLote mitigando colisiones."""
     origen = payload_crudo.get("origen_comunidad", "Desconocido")
-    plataforma = origen.split("_") if "_" in origen else origen
+    # CORRECCIÓN: Extrae el primer elemento (ej. 'Discord') en lugar de la lista completa
+    plataforma = origen.split("_")[0] if "_" in origen else origen
     fecha_ingesta = datetime.now(timezone.utc).isoformat()
     request_id = payload_crudo.get("request_id") or f"req_{uuid.uuid4().hex[:12]}"
 
@@ -70,6 +71,10 @@ def validar_lote_crudo(
 
     for raw_item in payload.interacciones:
         try:
+            # OPTIMIZACIÓN: Rechaza textos vacíos o con puros espacios para ahorrar tokens
+            if not raw_item.texto or not raw_item.texto.strip():
+                raise ValueError("El texto de la interacción está vacío o contiene solo espacios.")
+
             meta_validada = MetadataOrigenValidado(
                 plataforma=raw_item.metadata_origen.plataforma,
                 identificador_original=raw_item.metadata_origen.identificador_original,

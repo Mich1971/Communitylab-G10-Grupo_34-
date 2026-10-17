@@ -393,3 +393,60 @@ def registrar_analisis_bloque(
         raise e
     finally:
         conn.close()
+
+def registrar_rechazados_validador(rechazados: List[Dict[str, Any]]) -> int:
+    """
+    Toma los diccionarios de descarte del validador, los adapta a tuplas
+    y los persiste de forma atómica en la tabla de auditoría (DLQ).
+    """
+    if not rechazados:
+        return 0
+
+    tuplas_dlq = []
+    for r in rechazados:
+        tuplas_dlq.append((
+            r.get("run_id"),
+            r.get("request_id", "SIN_REQ_ID"),
+            r.get("mensaje_id") or r.get("id"),
+            r.get("autor", "Anónimo"),
+            r.get("canal", "sin_canal"),
+            r.get("error", "Error desconocido de validación"),
+            r.get("texto_crudo", ""),
+            r.get("fecha_aislamiento") or datetime.now(timezone.utc).isoformat()
+        ))
+
+    conn = sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT_SEGUNDOS)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+        cursor = conn.cursor()
+        
+        cursor.execute("BEGIN TRANSACTION;")
+        _persistir_en_dlq(cursor, tuplas_dlq)
+        conn.commit()
+        
+        logger.info("persistencia_rechazados_validador_exitosa", total=len(tuplas_dlq))
+        return len(tuplas_dlq)
+    except Exception as e:
+        conn.rollback()
+        logger.error("error_persistencia_rechazados_validador", error=str(e))
+        raise e
+    finally:
+        conn.close()
+
+def inicializar_db() -> None:
+    """
+    Ejecuta el script DDL de forma segura para levantar el esqueleto 
+    de tablas e índices en el archivo de base de datos local.
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT_SEGUNDOS)
+    try:
+        cursor = conn.cursor()
+        cursor.executescript(DDL_ESQUELETO)
+        conn.commit()
+        logger.info("inicializacion_base_de_datos_exitosa", path=DB_PATH)
+    except Exception as e:
+        logger.error("error_inicializacion_base_de_datos", error=str(e))
+        raise e
+    finally:
+        conn.close()
