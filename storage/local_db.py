@@ -259,16 +259,36 @@ CREATE VIEW IF NOT EXISTS vista_cola_curaduria AS
 SELECT p.run_id, p.numero_revision, p.fecha_generacion, pl.titulo AS titulo_linkedin, pl.cuerpo AS cuerpo_linkedin, rs.titular AS titular_resumen_semanal, rs.resumen AS resumen_semanal, er.estado, er.revisor, er.comentarios
 FROM paquetes_salida p JOIN estado_revision er ON p.run_id = er.run_id AND p.numero_revision = er.numero_revision LEFT JOIN post_linkedin pl ON p.run_id = pl.run_id AND p.numero_revision = pl.numero_revision LEFT JOIN resumen_semanal rs ON p.run_id = rs.run_id AND p.numero_revision = rs.numero_revision WHERE er.estado = 'pendiente';
 """
+def _persistir_en_dlq(cursor: sqlite3.Cursor, tuplas_dlq: List[Tuple[Any, ...]]) -> None:
+    """
+    Función auxiliar para aislar y persistir de forma masiva los registros 
+    corruptos en la cola de descarte (Dead Letter Queue).
+    """
+    if not tuplas_dlq:
+        return
+
+    cursor.executemany(
+        """
+        INSERT INTO auditoria_rechazados (
+            run_id, request_id, mensaje_id, autor, canal, error_detalle, texto_crudo, fecha_aislamiento
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    """,
+        tuplas_dlq,
+    )
 
 
 def registrar_analisis_bloque(
     analisis_cognitivo: Any, interacciones_origen: List[Any]
-) -> None:
+) -> Tuple[int, int]:
     """
     Inserta en bloque y de forma atómica los resultados analíticos de la IA.
-    Aplica indexación O(1), conversión estricta de tipos y secuenciación de FKs.
+    Aplica purga preventiva para garantizar la idempotencia y un DLQ para aislamiento.
+    
+    Retorna:
+        Tuple[int, int]: Conteo exacto de (registros_sanos, registros_rechazados).
     """
     run_id = analisis_cognitivo.run_id
+    request_id = analisis_cognitivo.request_id
     fecha_analisis = datetime.now(timezone.utc).isoformat()
 
     dict_origen = {int_val.id: int_val for int_val in interacciones_origen}
@@ -276,42 +296,53 @@ def registrar_analisis_bloque(
     tuplas_mensajes = []
     tuplas_temas = []
     tuplas_entidades = []
+    tuplas_purga = []
+    tuplas_dlq = []
 
     for msg_ia in analisis_cognitivo.mensajes_analizados:
         source_id = msg_ia.source_id
         msg_origen = dict_origen.get(source_id)
 
+        # DLQ Caso 1: ID Huérfano
         if not msg_origen:
             logger.error("error_integridad_origen", source_id=source_id, run_id=run_id)
+            tuplas_dlq.append((
+                run_id, request_id, source_id, "Desconocido", "Desconocido",
+                "ERROR_INTEGRIDAD: El ID analizado por la IA no existe en la ingesta original.",
+                f"Motivo IA: {msg_ia.motivo_seleccion}", fecha_analisis
+            ))
             continue
 
-        tuplas_mensajes.append(
-            (
-                source_id,
-                run_id,
-                msg_origen.autor,
-                msg_origen.canal,
-                msg_origen.tipo,
-                msg_origen.texto,
-                msg_ia.sentimiento,
-                msg_ia.categoria_enrutamiento,
-                msg_ia.regla_aplicada,
-                msg_ia.puntuacion_relevancia.evidencia_explicita,
-                msg_ia.puntuacion_relevancia.utilidad_comunitaria,
-                msg_ia.puntuacion_relevancia.claridad_contexto,
-                msg_ia.puntuacion_relevancia.total,
-                msg_ia.motivo_seleccion,
-                1 if msg_ia.requiere_soporte else 0,
-                1 if msg_ia.apto_para_publicacion else 0,
-                fecha_analisis,
-            )
-        )
+        # DLQ Caso 2: Violación Check Longitud (Mínimo 10 caracteres)
+        if len(msg_ia.motivo_seleccion) < 10:
+            logger.error("error_validacion_ddl_motivo", source_id=source_id, run_id=run_id)
+            tuplas_dlq.append((
+                run_id, request_id, source_id, msg_origen.autor, msg_origen.canal,
+                "ERROR_DDL_CHECK: 'motivo_seleccion' inferior a 10 caracteres.",
+                msg_origen.texto, fecha_analisis
+            ))
+            continue
+
+        # Registro Sano: Preparación para Persistencia Analítica
+        tuplas_purga.append((source_id,))
+        tuplas_mensajes.append((
+            source_id, run_id, msg_origen.autor, msg_origen.canal, msg_origen.tipo,
+            msg_origen.texto, msg_ia.sentimiento, msg_ia.categoria_enrutamiento,
+            msg_ia.regla_aplicada, msg_ia.puntuacion_relevancia.evidencia_explicita,
+            msg_ia.puntuacion_relevancia.utilidad_comunitaria,
+            msg_ia.puntuacion_relevancia.claridad_contexto,
+            msg_ia.puntuacion_relevancia.total, msg_ia.motivo_seleccion,
+            1 if msg_ia.requiere_soporte else 0, 1 if msg_ia.apto_para_publicacion else 0,
+            fecha_analisis,
+        ))
 
         for tema in msg_ia.temas:
             tuplas_temas.append((source_id, tema))
-
         for entidad in msg_ia.entidades_relevantes:
             tuplas_entidades.append((source_id, entidad))
+
+    conteo_sanos = len(tuplas_mensajes)
+    conteo_rechazados = len(tuplas_dlq)
 
     conn = sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT_SEGUNDOS)
     try:
@@ -321,6 +352,12 @@ def registrar_analisis_bloque(
         cursor = conn.cursor()
         cursor.execute("BEGIN TRANSACTION;")
 
+        # 1. Purga preventiva atómica de tablas secundarias
+        if tuplas_purga:
+            cursor.executemany("DELETE FROM mensaje_temas WHERE source_id = ?;", tuplas_purga)
+            cursor.executemany("DELETE FROM mensaje_entidades WHERE source_id = ?;", tuplas_purga)
+
+        # 2. Inserción de Mensajes Procesados Correctamente
         if tuplas_mensajes:
             cursor.executemany(
                 """
@@ -334,31 +371,25 @@ def registrar_analisis_bloque(
                 tuplas_mensajes,
             )
 
+        # 3. Inserción de Metadatos Relacionales
         if tuplas_temas:
-            cursor.executemany(
-                """
-                INSERT INTO mensaje_temas (source_id, tema) VALUES (?, ?);
-            """,
-                tuplas_temas,
-            )
-
+            cursor.executemany("INSERT INTO mensaje_temas (source_id, tema) VALUES (?, ?);", tuplas_temas)
         if tuplas_entidades:
-            cursor.executemany(
-                """
-                INSERT INTO mensaje_entidades (source_id, entidad) VALUES (?, ?);
-            """,
-                tuplas_entidades,
-            )
+            cursor.executemany("INSERT INTO mensaje_entidades (source_id, entidad) VALUES (?, ?);", tuplas_entidades)
+
+        # 4. Aislamiento Masivo en la Cola de Descarte (DLQ)
+        _persistir_en_dlq(cursor, tuplas_dlq)
 
         conn.commit()
         logger.info(
-            "insercion_analitica_bloque_exitosa",
-            run_id=run_id,
-            registros=len(tuplas_mensajes),
+            "insercion_analitica_bloque_con_dlq_exitosa",
+            run_id=run_id, registros_sanos=conteo_sanos, registros_desviados_dlq=conteo_rechazados
         )
+        return conteo_sanos, conteo_rechazados
+
     except Exception as e:
         conn.rollback()
-        logger.error("error_transaccion_bloque", run_id=run_id, error=str(e))
+        logger.error("error_transaccion_bloque_dlq", run_id=run_id, error=str(e))
         raise e
     finally:
         conn.close()
