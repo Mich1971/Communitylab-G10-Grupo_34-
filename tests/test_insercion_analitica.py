@@ -26,9 +26,11 @@ class MockMensajeIA:
         self.apto_para_publicacion = apto
 
 class MockAnalisisCognitivo:
-    def __init__(self, run_id, mensajes):
+    def __init__(self, run_id, mensajes, request_id="req_mock_default"):
         self.run_id = run_id
+        self.request_id = request_id  # Soluciona el fallo de compatibilidad con el DLQ
         self.mensajes_analizados = mensajes
+
 
 class MockInteraccionValidada:
     def __init__(self, id_msg, autor, canal, texto):
@@ -96,5 +98,169 @@ def test_insercion_bloque_resiliencia_y_tipos(monkeypatch, tmp_path):
     temas = [row[0] for row in cursor.fetchall()]
     assert "SQLite" in temas
     assert "WAL" in temas
+
+    conn.close()
+
+def test_idempotencia_reprocesamiento_bloque(monkeypatch, tmp_path):
+    """Garantiza que el reprocesamiento del mismo lote no duplique metadatos N:M (Regla 4)."""
+    
+    # 1. Setup: Base de datos efímera aislada
+    db_test_path = str(tmp_path / "test_idempotencia.db")
+    monkeypatch.setattr("storage.local_db.DB_PATH", db_test_path)
+    
+    conn = sqlite3.connect(db_test_path)
+    conn.executescript(DDL_ESQUELETO)
+    
+    # Insertar registro padre mandatorio para cumplir FK
+    conn.execute("""
+        INSERT INTO lotes_procesamiento VALUES 
+        ('run_idemp_01', 'req_idemp_01', 'Slack', 'Semana_04', 1, 1, 0, '2026-10-16');
+    """)
+    conn.commit()
+
+    # 2. Preparar datos de prueba (1 mensaje con 2 temas y 1 entidad)
+    msg_origen = MockInteraccionValidada("msg_idemp_01", "Andrea Core", "#dev", "Idempotencia probada en Sandbox")
+    interacciones_origen = [msg_origen]
+
+    ia_analisis = MockMensajeIA(
+        "msg_idemp_01", 
+        "Altamente Positivo", 
+        "Logro", 
+        ["Idempotencia", "SQLite"],  # 2 Temas
+        ["Oracle"],                   # 1 Entidad
+        False, 
+        True
+    )
+    analis_ia = MockAnalisisCognitivo("run_idemp_01", [ia_analisis])
+
+    # 3. Ejecución del pipeline: Intento 1
+    registrar_analisis_bloque(analis_ia, interacciones_origen)
+
+    # 4. Ejecución del pipeline: Intento 2 (Reprocesamiento directo del mismo lote)
+    registrar_analisis_bloque(analis_ia, interacciones_origen)
+
+    # 5. Aseveraciones de Calidad de Datos (QA Data)
+    cursor = conn.cursor()
+    
+    # La tabla nuclear debe tener un único registro (INSERT OR REPLACE)
+    cursor.execute("SELECT COUNT(*) FROM mensajes_analizados WHERE run_id='run_idemp_01';")
+    assert cursor.fetchone()[0] == 1
+
+    # REGLA 4: Las tablas N:M NO deben duplicar filas. Deben mantener el conteo original.
+    cursor.execute("SELECT COUNT(*) FROM mensaje_temas WHERE source_id='msg_idemp_01';")
+    assert cursor.fetchone()[0] == 2  # Si fallara la purga, contaría 4
+
+    cursor.execute("SELECT COUNT(*) FROM mensaje_entidades WHERE source_id='msg_idemp_01';")
+    assert cursor.fetchone()[0] == 1  # Si fallara la purga, contaría 2
+
+    conn.close()
+    
+def test_dead_letter_queue_aislamiento(monkeypatch, tmp_path):
+    """Garantiza que los registros corruptos sean desviados por la función DLQ (Regla 4)."""
+    
+    # 1. Setup: Base de datos aislada
+    db_test_path = str(tmp_path / "test_dlq.db")
+    monkeypatch.setattr("storage.local_db.DB_PATH", db_test_path)
+    
+    conn = sqlite3.connect(db_test_path)
+    conn.executescript(DDL_ESQUELETO)
+    
+    # Registro padre mandatorio
+    conn.execute("""
+        INSERT INTO lotes_procesamiento VALUES 
+        ('run_dlq_01', 'req_dlq_01', 'Discord', 'Semana_04', 1, 0, 1, '2026-10-17');
+    """)
+    conn.commit()
+
+    # 2. Mock con error deliberado (motivo_seleccion menor a 10 caracteres)
+    msg_origen = MockInteraccionValidada("msg_corrupto_01", "Sergio UI", "#alerts", "Mensaje defectuoso")
+    interacciones_origen = [msg_origen]
+
+    ia_analisis = MockMensajeIA(
+        "msg_corrupto_01", "Neutro", "Duda", ["Test"], [], False, False
+    )
+    # Forzar el fallo de longitud de forma quirúrgica
+    ia_analisis.motivo_seleccion = "Corto" 
+    
+    analis_ia = MockAnalisisCognitivo("run_dlq_01", [ia_analisis])
+    # Inyectar el request_id requerido por el contrato del DLQ
+    analis_ia.request_id = "req_dlq_01"
+
+    # 3. Ejecución
+    registrar_analisis_bloque(analis_ia, interacciones_origen)
+
+    # 4. Asserts: Validación de aislamiento en el DLQ
+    cursor = conn.cursor()
+    
+    # No debe haberse guardado en la tabla nuclear
+    cursor.execute("SELECT COUNT(*) FROM mensajes_analizados WHERE source_id='msg_corrupto_01';")
+    assert cursor.fetchone()[0] == 0
+
+    # Debe estar registrado detalladamente en la auditoría del DLQ
+    cursor.execute("""
+        SELECT mensaje_id, error_detalle, texto_crudo 
+        FROM auditoria_rechazados 
+        WHERE run_id='run_dlq_01';
+    """)
+    fila_dlq = cursor.fetchone()
+    
+    assert fila_dlq is not None
+    assert fila_dlq[0] == "msg_corrupto_01"
+    assert "ERROR_DDL_CHECK" in fila_dlq[1]
+    assert fila_dlq[2] == "Mensaje defectuoso"
+
+    conn.close()
+
+def test_dlq_lote_mixto_metricas(monkeypatch, tmp_path):
+    """Valida la bifurcación de un lote mixto y el retorno correcto de los conteos exactos."""
+    
+    # 1. Setup: Base de datos aislada
+    db_test_path = str(tmp_path / "test_mixto.db")
+    monkeypatch.setattr("storage.local_db.DB_PATH", db_test_path)
+    
+    conn = sqlite3.connect(db_test_path)
+    conn.executescript(DDL_ESQUELETO)
+    
+    # Registro padre mandatorio
+    conn.execute("""
+        INSERT INTO lotes_procesamiento VALUES 
+        ('run_mixto_01', 'req_mixto_01', 'Discord', 'Semana_04', 3, 2, 1, '2026-10-17');
+    """)
+    conn.commit()
+
+    # 2. Mocks de Origen (3 interacciones válidas en ingesta)
+    msg_sano_1 = MockInteraccionValidada("msg_ok_01", "Andrea Core", "#dev", "Texto válido uno")
+    msg_sano_2 = MockInteraccionValidada("msg_ok_02", "Sergio UI", "#design", "Texto válido dos")
+    msg_malo = MockInteraccionValidada("msg_bad_01", "Miembro Anon", "#help", "Texto que fallará")
+    interacciones_origen = [msg_sano_1, msg_sano_2, msg_malo]
+
+    # Mocks de IA (2 correctos + 1 con motivo corto)
+    ia_ok_1 = MockMensajeIA("msg_ok_01", "Positivo", "Logro", ["IA"], [], False, True)
+    ia_ok_2 = MockMensajeIA("msg_ok_02", "Neutro", "Duda", ["UI"], [], False, False)
+    ia_bad = MockMensajeIA("msg_bad_01", "Dificultad/Negativo", "Dificultad", ["Bug"], [], True, False)
+    ia_bad.motivo_seleccion = "Corto" # Provoca desvío al DLQ
+
+    analis_ia = MockAnalisisCognitivo("run_mixto_01", [ia_ok_1, ia_ok_2, ia_bad], request_id="req_mixto_01")
+
+    # 3. Ejecución y Captura de Métricas Retornadas (Optimización)
+    sanos, rechazados = registrar_analisis_bloque(analis_ia, interacciones_origen)
+
+    # 4. Aserciones de las Métricas de Retorno
+    assert sanos == 2
+    assert rechazados == 1
+
+    # 5. Aserciones de Persistencia en Base de Datos
+    cursor = conn.cursor()
+    
+    # Verificar almacenamiento analítico sano
+    cursor.execute("SELECT COUNT(*) FROM mensajes_analizados WHERE run_id='run_mixto_01';")
+    assert cursor.fetchone()[0] == 2
+
+    # Verificar aislamiento en el DLQ
+    cursor.execute("SELECT mensaje_id, error_detalle FROM auditoria_rechazados WHERE run_id='run_mixto_01';")
+    fila_dlq = cursor.fetchone()
+    assert fila_dlq is not None
+    assert fila_dlq[0] == "msg_bad_01"
+    assert "ERROR_DDL_CHECK" in fila_dlq[1]
 
     conn.close()
