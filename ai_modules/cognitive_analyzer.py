@@ -15,17 +15,19 @@ import random
 import re
 import time
 from collections import Counter
+from dataclasses import dataclass
 
 import structlog
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from ai_modules.multiprovider_agent import CognitiveAgentFactory
-from ai_modules.prompts import SYSTEM_PROMPT
+from ai_modules.prompts import SYSTEM_PROMPT, version_de_prompt
 from esquemas import (
     AnalisisCognitivo,
     InteraccionValidada,
     MensajeAnalizado,
+    MetadatosEjecucion,
     PuntuacionRelevancia,
     ResumenComunidad,
 )
@@ -125,6 +127,59 @@ def _crear_mensaje_degradado(source_id: str, error: Exception) -> MensajeAnaliza
     )
 
 
+@dataclass(frozen=True)
+class _Uso:
+    """Tokens de una sola inferencia. Una inferencia degradada no aporta uso."""
+
+    cacheados: int = 0
+    entrada: int = 0
+    salida: int = 0
+
+
+class TelemetriaAnalisis(BaseModel):
+    """Telemetría de una ejecución de `analizar_lote_cognitivo_con_telemetria`.
+
+    No es un contrato canónico: es un modelo interno de `ai_modules/`. Lo
+    consume el orquestador para componer `MetadatosEjecucion` (Contrato 3)
+    sin modificar `esquemas.py`.
+
+    Alcance de las cifras:
+    - `latencia_ms` es el tiempo de pared del lote completo. Las inferencias
+      corren en paralelo, así que NO es la suma de las latencias individuales.
+    - `tokens_*` suman solo las respuestas que el proveedor devolvió con
+      éxito. Los intentos que terminaron en excepción no informan uso, así
+      que en lotes con muchos reintentos el consumo real puede ser mayor.
+    """
+
+    proveedor: str
+    modelo: str
+    prompt_version: str
+    latencia_ms: int = Field(..., ge=0)
+    tokens_entrada: int = Field(..., ge=0)
+    tokens_salida: int = Field(..., ge=0)
+    tokens_cacheados: int = Field(..., ge=0)
+    total_procesados: int = Field(..., ge=1)
+    degradados: int = Field(..., ge=0)
+
+    @property
+    def tokens_totales(self) -> int:
+        return self.tokens_entrada + self.tokens_salida
+
+    def a_metadatos_ejecucion(self) -> MetadatosEjecucion:
+        """Conversión directa a los cuatro campos del Contrato 3."""
+        return MetadatosEjecucion(
+            modelo=self.modelo,
+            prompt_version=self.prompt_version,
+            latencia_ms=self.latencia_ms,
+            tokens_totales=self.tokens_totales,
+        )
+
+
+def _nombre_modelo(agent, proveedor: str) -> str:
+    nombre = getattr(getattr(agent, "model", None), "model_name", None)
+    return nombre if isinstance(nombre, str) and nombre else f"{proveedor}:desconocido"
+
+
 def _preparar_entrada(interaccion: InteraccionValidada) -> str:
     texto = _truncar_texto_semantico(_enmascarar_pii(interaccion.texto))
     datos = interaccion.model_copy(update={"texto": texto}).model_dump(mode="json")
@@ -141,8 +196,8 @@ async def _ejecutar_inferencia_con_resiliencia(
     interaccion: InteraccionValidada,
     proveedor: str,
     max_reintentos: int,
-) -> tuple[MensajeAnalizado, int]:
-    """Devuelve (mensaje, tokens_cacheados). Nunca propaga errores del proveedor."""
+) -> tuple[MensajeAnalizado, _Uso]:
+    """Devuelve (mensaje, uso de tokens). Nunca propaga errores del proveedor."""
     entrada = _preparar_entrada(interaccion)
     fallos_validacion = 0
     ultimo_error: Exception = RuntimeError("sin_intentos")
@@ -154,8 +209,14 @@ async def _ejecutar_inferencia_con_resiliencia(
             mensaje: MensajeAnalizado = resultado.output
             # Invariante de trazabilidad: el LLM no decide el source_id.
             mensaje = mensaje.model_copy(update={"source_id": interaccion.id})
-            tokens = CognitiveAgentFactory.extract_cached_tokens(proveedor, resultado.usage())
-            return mensaje, tokens
+            uso_crudo = resultado.usage()
+            entrada_tok, salida_tok = CognitiveAgentFactory.extract_token_counts(uso_crudo)
+            uso = _Uso(
+                cacheados=CognitiveAgentFactory.extract_cached_tokens(proveedor, uso_crudo),
+                entrada=entrada_tok,
+                salida=salida_tok,
+            )
+            return mensaje, uso
         except (ValidationError, UnexpectedModelBehavior) as exc:
             ultimo_error = exc
             fallos_validacion += 1
@@ -170,7 +231,7 @@ async def _ejecutar_inferencia_con_resiliencia(
         source_id=interaccion.id,
         error_tipo=type(ultimo_error).__name__,
     )
-    return _crear_mensaje_degradado(interaccion.id, ultimo_error), 0
+    return _crear_mensaje_degradado(interaccion.id, ultimo_error), _Uso()
 
 
 def _es_degradado(m: MensajeAnalizado) -> bool:
@@ -229,15 +290,20 @@ def _calcular_resumen_comunidad(
     )
 
 
-async def analizar_lote_cognitivo(
+async def analizar_lote_cognitivo_con_telemetria(
     interacciones: list[InteraccionValidada],
     run_id: str,
     request_id: str,
     provider: str | None = None,
     max_concurrency: int | None = None,
     system_prompt: str | None = None,
-) -> AnalisisCognitivo:
-    """Analiza un lote de interacciones ya validadas y devuelve el Contrato 2.
+) -> tuple[AnalisisCognitivo, TelemetriaAnalisis]:
+    """Igual que `analizar_lote_cognitivo`, pero devuelve además la telemetría
+    de la ejecución (modelo, versión de prompt, latencia y tokens), de la que
+    el orquestador compone `MetadatosEjecucion`. Es la implementación real;
+    `analizar_lote_cognitivo` es un envoltorio que conserva su firma pública.
+
+    Analiza un lote de interacciones ya validadas y devuelve el Contrato 2.
 
     `max_concurrency` y los reintentos se resuelven desde
     COGNITIVE_ANALYZER_CONCURRENCY y LLM_MAX_RETRIES si no se pasan.
@@ -264,7 +330,7 @@ async def analizar_lote_cognitivo(
     )
     semaforo = asyncio.Semaphore(concurrencia)
 
-    async def _procesar(i: InteraccionValidada) -> tuple[MensajeAnalizado, int]:
+    async def _procesar(i: InteraccionValidada) -> tuple[MensajeAnalizado, _Uso]:
         async with semaforo:
             return await _ejecutar_inferencia_con_resiliencia(agent, i, proveedor, max_reintentos)
 
@@ -273,8 +339,21 @@ async def analizar_lote_cognitivo(
     total_seg = time.perf_counter() - inicio
 
     mensajes = [m for m, _ in resultados]
-    tokens_cacheados = sum(t for _, t in resultados)
+    tokens_cacheados = sum(u.cacheados for _, u in resultados)
+    tokens_entrada = sum(u.entrada for _, u in resultados)
+    tokens_salida = sum(u.salida for _, u in resultados)
     resumen = _calcular_resumen_comunidad(mensajes, len(interacciones))
+    telemetria = TelemetriaAnalisis(
+        proveedor=proveedor,
+        modelo=_nombre_modelo(agent, proveedor),
+        prompt_version=version_de_prompt(system_prompt or SYSTEM_PROMPT),
+        latencia_ms=round(total_seg * 1000),
+        tokens_entrada=tokens_entrada,
+        tokens_salida=tokens_salida,
+        tokens_cacheados=tokens_cacheados,
+        total_procesados=len(mensajes),
+        degradados=resumen.registros_rechazados,
+    )
 
     logger.info(
         "analisis_cognitivo_completado",
@@ -286,10 +365,40 @@ async def analizar_lote_cognitivo(
         latencia_promedio_por_registro_ms=round(total_seg / len(mensajes) * 1000, 2),
         degradados=resumen.registros_rechazados,
         tokens_cacheados=tokens_cacheados,
+        tokens_entrada=tokens_entrada,
+        tokens_salida=tokens_salida,
+        modelo=telemetria.modelo,
+        prompt_version=telemetria.prompt_version,
     )
-    return AnalisisCognitivo(
+    analisis = AnalisisCognitivo(
         run_id=run_id,
         request_id=request_id,
         resumen_comunidad=resumen,
         mensajes_analizados=mensajes,
     )
+    return analisis, telemetria
+
+
+async def analizar_lote_cognitivo(
+    interacciones: list[InteraccionValidada],
+    run_id: str,
+    request_id: str,
+    provider: str | None = None,
+    max_concurrency: int | None = None,
+    system_prompt: str | None = None,
+) -> AnalisisCognitivo:
+    """Analiza un lote de interacciones ya validadas y devuelve el Contrato 2.
+
+    Firma pública estable: delega en `analizar_lote_cognitivo_con_telemetria`
+    y descarta la telemetría. Quien necesite tokens y latencia (el
+    orquestador) debe llamar a esa función en su lugar.
+    """
+    analisis, _ = await analizar_lote_cognitivo_con_telemetria(
+        interacciones,
+        run_id,
+        request_id,
+        provider=provider,
+        max_concurrency=max_concurrency,
+        system_prompt=system_prompt,
+    )
+    return analisis

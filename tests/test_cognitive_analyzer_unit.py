@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import UTC, datetime
 
 import pytest
 
 from ai_modules import cognitive_analyzer as ca
-from esquemas import InteraccionValidada, MensajeAnalizado, PuntuacionRelevancia
+from ai_modules.prompts import PROMPT_VERSION, version_de_prompt
+from esquemas import (
+    AnalisisCognitivo,
+    InteraccionValidada,
+    MensajeAnalizado,
+    MetadatosEjecucion,
+    PuntuacionRelevancia,
+)
 
 
 def _interaccion(i: int, texto: str = "Terminé el módulo de LangGraph hoy") -> InteraccionValidada:
@@ -261,3 +269,135 @@ def test_system_prompt_por_defecto_usa_system_prompt_de_produccion(monkeypatch):
     monkeypatch.setattr(ca.CognitiveAgentFactory, "create_agent", _factory_falsa)
     asyncio.run(ca.analizar_lote_cognitivo([_interaccion(1)], "r", "q", provider="openai"))
     assert capturado["system_prompt"] == ca.SYSTEM_PROMPT
+
+
+# --- telemetría (tokens, latencia, modelo, versión de prompt) ---------------
+
+
+class _UsoFalso:
+    """Imita los campos normalizados de pydantic_ai.usage.RunUsage."""
+
+    def __init__(self, entrada: int, salida: int, cacheados: int = 0):
+        self.input_tokens = entrada
+        self.output_tokens = salida
+        self.cache_read_tokens = cacheados
+
+
+class _ResultadoConUso:
+    def __init__(self, output, uso):
+        self.output = output
+        self._uso = uso
+
+    def usage(self):
+        return self._uso
+
+
+class _ModeloFalso:
+    model_name = "modelo-de-prueba-1"
+
+
+class _AgenteConUso:
+    """Responde con un uso de tokens fijo y expone `.model.model_name`."""
+
+    model = _ModeloFalso()
+
+    def __init__(self, entrada=100, salida=20, cacheados=30):
+        self.uso = _UsoFalso(entrada, salida, cacheados)
+
+    async def run(self, entrada, model_settings=None):
+        return _ResultadoConUso(_mensaje("id_inventado_por_el_llm"), self.uso)
+
+
+def test_telemetria_suma_tokens_de_todas_las_inferencias(monkeypatch):
+    _usar_agente(monkeypatch, _AgenteConUso(entrada=100, salida=20, cacheados=30))
+    lote = [_interaccion(1), _interaccion(2), _interaccion(3)]
+    analisis, tel = asyncio.run(
+        ca.analizar_lote_cognitivo_con_telemetria(lote, "r", "q", provider="openai")
+    )
+    assert len(analisis.mensajes_analizados) == 3
+    assert tel.tokens_entrada == 300 and tel.tokens_salida == 60
+    assert tel.tokens_totales == 360
+    assert tel.tokens_cacheados == 90
+    assert tel.total_procesados == 3 and tel.degradados == 0
+
+
+def test_telemetria_reporta_modelo_y_version_de_prompt_de_produccion(monkeypatch):
+    _usar_agente(monkeypatch, _AgenteConUso())
+    _, tel = asyncio.run(
+        ca.analizar_lote_cognitivo_con_telemetria([_interaccion(1)], "r", "q", provider="gemini")
+    )
+    assert tel.modelo == "modelo-de-prueba-1"
+    assert tel.proveedor == "gemini"
+    assert tel.prompt_version == PROMPT_VERSION
+    assert isinstance(tel.latencia_ms, int) and tel.latencia_ms >= 0
+
+
+def test_telemetria_marca_como_personalizado_un_prompt_distinto(monkeypatch):
+    _usar_agente(monkeypatch, _AgenteConUso())
+    _, tel = asyncio.run(
+        ca.analizar_lote_cognitivo_con_telemetria(
+            [_interaccion(1)], "r", "q", provider="openai", system_prompt="PROMPT_DE_PRUEBA"
+        )
+    )
+    assert tel.prompt_version.startswith("personalizado+")
+    assert tel.prompt_version != PROMPT_VERSION
+
+
+def test_version_de_prompt_cambia_si_cambia_el_contenido():
+    assert version_de_prompt(ca.SYSTEM_PROMPT) == PROMPT_VERSION
+    assert version_de_prompt("a") != version_de_prompt("b")
+    assert version_de_prompt("a") == version_de_prompt("a")
+
+
+def test_telemetria_modelo_desconocido_usa_valor_de_respaldo(monkeypatch):
+    _usar_agente(monkeypatch, _AgenteFalso())  # sin atributo `.model`
+    _, tel = asyncio.run(
+        ca.analizar_lote_cognitivo_con_telemetria([_interaccion(1)], "r", "q", provider="openai")
+    )
+    assert tel.modelo == "openai:desconocido"
+    assert tel.tokens_totales == 0  # el uso de este agente falso no trae contadores
+
+
+def test_telemetria_degradados_no_aportan_tokens(monkeypatch):
+    _usar_agente(monkeypatch, _AgenteFalso(fallos=999))
+    _, tel = asyncio.run(
+        ca.analizar_lote_cognitivo_con_telemetria(
+            [_interaccion(1), _interaccion(2)], "r", "q", provider="openai"
+        )
+    )
+    assert tel.degradados == 2
+    assert tel.tokens_entrada == 0 and tel.tokens_salida == 0 and tel.tokens_cacheados == 0
+
+
+def test_telemetria_se_convierte_a_metadatos_ejecucion_valido(monkeypatch):
+    _usar_agente(monkeypatch, _AgenteConUso(entrada=50, salida=10))
+    _, tel = asyncio.run(
+        ca.analizar_lote_cognitivo_con_telemetria([_interaccion(1)], "r", "q", provider="openai")
+    )
+    meta = tel.a_metadatos_ejecucion()
+    assert isinstance(meta, MetadatosEjecucion)
+    assert meta.modelo == "modelo-de-prueba-1"
+    assert meta.prompt_version == PROMPT_VERSION
+    assert meta.tokens_totales == 60
+    assert meta.latencia_ms == tel.latencia_ms
+
+
+def test_firma_publica_de_analizar_lote_cognitivo_no_cambio(monkeypatch):
+    """La función original sigue devolviendo solo el Contrato 2 y conserva
+    exactamente sus parámetros: quien la usa (calibración, pruebas) no cambia."""
+    assert list(inspect.signature(ca.analizar_lote_cognitivo).parameters) == [
+        "interacciones",
+        "run_id",
+        "request_id",
+        "provider",
+        "max_concurrency",
+        "system_prompt",
+    ]
+    _usar_agente(monkeypatch, _AgenteConUso())
+    r = asyncio.run(ca.analizar_lote_cognitivo([_interaccion(1)], "r", "q", provider="openai"))
+    assert isinstance(r, AnalisisCognitivo)
+
+
+def test_la_variante_con_telemetria_valida_lote_vacio():
+    with pytest.raises(ValueError):
+        asyncio.run(ca.analizar_lote_cognitivo_con_telemetria([], "r", "q"))

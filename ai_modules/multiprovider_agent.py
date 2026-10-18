@@ -143,6 +143,13 @@ class CognitiveAgentFactory:
         """
         provider_normalizado = provider.lower()
         try:
+            # CORRECCIÓN: PydanticAI ya normaliza el dato entre proveedores en
+            # `RunUsage.cache_read_tokens`. Los atributos específicos de cada
+            # proveedor (abajo) no existen en ese objeto, así que antes esta
+            # función devolvía siempre 0 con el `usage()` real de un agente.
+            normalizado = getattr(raw_usage, "cache_read_tokens", None)
+            if isinstance(normalizado, int) and not isinstance(normalizado, bool) and normalizado > 0:
+                return normalizado
             if provider_normalizado == "openai":
                 details = getattr(raw_usage, "prompt_tokens_details", None)
                 return getattr(details, "cached_tokens", 0) if details is not None else 0
@@ -154,3 +161,22 @@ class CognitiveAgentFactory:
             logger.warning("fallo_extraccion_tokens_cacheados", proveedor=provider_normalizado)
             return 0
         return 0
+
+    @staticmethod
+    def extract_token_counts(raw_usage: Any) -> tuple[int, int]:
+        """Devuelve `(tokens_entrada, tokens_salida)` de una respuesta.
+
+        Usa los campos normalizados de `RunUsage` (`input_tokens`,
+        `output_tokens`), idénticos para los tres proveedores. Como el resto
+        de la telemetría, es de mejor esfuerzo: ante cualquier fallo devuelve
+        `(0, 0)` en vez de interrumpir el procesamiento del lote.
+        """
+        try:
+            entrada = getattr(raw_usage, "input_tokens", 0)
+            salida = getattr(raw_usage, "output_tokens", 0)
+            entrada = entrada if isinstance(entrada, int) and not isinstance(entrada, bool) else 0
+            salida = salida if isinstance(salida, int) and not isinstance(salida, bool) else 0
+            return max(0, entrada), max(0, salida)
+        except Exception:  # noqa: BLE001 — telemetría best-effort, nunca debe tumbar el lote
+            logger.warning("fallo_extraccion_tokens")
+            return 0, 0

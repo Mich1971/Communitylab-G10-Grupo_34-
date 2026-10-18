@@ -88,3 +88,28 @@ def test_extract_cached_tokens_degrada_a_cero_sin_lanzar_excepcion():
     objeto_sin_atributos = object()
     assert CognitiveAgentFactory.extract_cached_tokens("openai", objeto_sin_atributos) == 0
     assert CognitiveAgentFactory.extract_cached_tokens("proveedor-desconocido", objeto_sin_atributos) == 0
+
+
+# --- compatibilidad con el `usage()` real de PydanticAI (RunUsage) ----------
+
+
+def test_extract_cached_tokens_lee_el_campo_normalizado_de_run_usage():
+    """Regresión: antes solo se leían atributos propios de cada proveedor, que
+    no existen en `RunUsage`, así que el valor real siempre salía 0."""
+    from pydantic_ai.usage import RunUsage
+
+    uso = RunUsage(input_tokens=1000, output_tokens=50, cache_read_tokens=700)
+    for proveedor in ("openai", "anthropic", "gemini"):
+        assert CognitiveAgentFactory.extract_cached_tokens(proveedor, uso) == 700
+
+
+def test_extract_token_counts_lee_entrada_y_salida_de_run_usage():
+    from pydantic_ai.usage import RunUsage
+
+    uso = RunUsage(input_tokens=1000, output_tokens=50)
+    assert CognitiveAgentFactory.extract_token_counts(uso) == (1000, 50)
+
+
+def test_extract_token_counts_degrada_a_cero_sin_lanzar_excepcion():
+    assert CognitiveAgentFactory.extract_token_counts(object()) == (0, 0)
+    assert CognitiveAgentFactory.extract_token_counts(None) == (0, 0)
