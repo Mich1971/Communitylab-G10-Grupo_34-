@@ -450,3 +450,147 @@ def inicializar_db() -> None:
         raise e
     finally:
         conn.close()
+
+def reconstruir_json_paquete_salida(run_id: str, numero_revision: int) -> Dict[str, Any]:
+    """
+    Reconstruye en memoria el objeto JSON exacto del paquete de salida
+    haciendo un JOIN de las tablas relacionales de SQLite.
+    Optimizado para evitar escrituras basura en disco.
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT_SEGUNDOS)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+        cursor = conn.cursor()
+
+        # 1. Extraer datos maestros del paquete y sub-tablas nucleares
+        cursor.execute("""
+            SELECT 
+                rc.total_interacciones_procesadas, rc.sentimiento_predominante,
+                pl.titulo, pl.cuerpo, pl.canal_recomendado,
+                rs.seccion, rs.titular, rs.resumen,
+                eo.bucket, eo.ruta_objeto, eo.status_almacenamiento
+            FROM paquetes_salida p
+            JOIN resumen_comunidad rc ON p.run_id = rc.run_id
+            LEFT JOIN post_linkedin pl ON p.run_id = pl.run_id AND p.numero_revision = pl.numero_revision
+            LEFT JOIN resumen_semanal rs ON p.run_id = rs.run_id AND p.numero_revision = rs.numero_revision
+            LEFT JOIN evidencia_almacenamiento_oci eo ON p.run_id = eo.run_id AND p.numero_revision = eo.numero_revision
+            WHERE p.run_id = ? AND p.numero_revision = ?;
+        """, (run_id, numero_revision))
+        
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError(f"No se encontró el paquete de salida para run_id='{run_id}' y revisión={numero_revision}")
+
+        (total_int, sent_pred, li_titulo, li_cuerpo, li_canal, sem_sec, sem_tit, sem_res, oci_buck, oci_ruta, oci_stat) = row
+
+        # 2. Extraer listas asociadas (Temas y Hashtags)
+        cursor.execute("SELECT tema FROM resumen_temas_principales WHERE run_id = ? ORDER BY orden;", (run_id,))
+        temas = [r[0] for r in cursor.fetchall()]
+
+        cursor.execute("""
+            SELECT hashtag FROM post_linkedin_hashtags 
+            WHERE run_id = ? AND numero_revision = ?;
+        """, (run_id, numero_revision))
+        hashtags = [f"#{r[0].lstrip('#')}" for r in cursor.fetchall()]
+
+        # 3. Construcción del Contrato Estructurado (Economía de tokens / RAM)
+        return {
+            "status": "exito",
+            "resumen_comunidad": {
+                "total_interacciones_procesadas": total_int,
+                "sentimiento_predominante": sent_pred,
+                "temas_principales": temas
+            },
+            "activos_distribucion_generados": {
+                "post_linkedin": {
+                    "titulo": li_titulo.strip() if li_titulo else "",
+                    "copy": f"{li_cuerpo.strip()}\n\n{' '.join(hashtags)}".strip() if li_cuerpo else "",
+                    "canal_recomendado": li_canal or "LinkedIn Oficial"
+                },
+                "destaque_newsletter_semanal": {
+                    "seccion": sem_sec or "",
+                    "titular": sem_tit or "",
+                    "resumen": sem_res or ""
+                }
+            },
+            "almacenamiento_oci": {
+                "bucket": oci_buck or "communitylab-activos-marketing",
+                "ruta_objeto": oci_ruta or "",
+                "status": oci_stat or "no_iniciado"
+            }
+        }
+    except Exception as e:
+        logger.error("error_reconstruccion_json_memoria", run_id=run_id, revision=numero_revision, error=str(e))
+        raise e
+    finally:
+        conn.close()
+
+def sincronizar_pendientes_oci(storage_client: Any) -> Tuple[int, int]:
+    """
+    Barre la base de datos buscando paquetes con 'guardado_error' en OCI.
+    Los reconstruye en memoria y reintenta la subida de forma idempotente.
+    
+    Retorna:
+        Tuple[int, int]: Conteo de (sincronizaciones_exitosas, fallidas_recurrentes).
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT_SEGUNDOS)
+    cursor = conn.cursor()
+    
+    # 1. Identificar registros con fallos de almacenamiento previos
+    cursor.execute("""
+        SELECT e.run_id, e.numero_revision, l.periodo_referencia, l.request_id
+        FROM evidencia_almacenamiento_oci e
+        JOIN lotes_procesamiento l ON e.run_id = l.run_id
+        WHERE e.status_almacenamiento = 'guardado_error';
+    """)
+    pendientes = cursor.fetchall()
+    conn.close()
+
+    exitosos = 0
+    fallidos = 0
+
+    if not pendientes:
+        logger.info("sincronizacion_oci_sin_pendientes", detalle="La cola de reintentos está vacía.")
+        return 0, 0
+
+    logger.info("sincronizacion_oci_iniciada", total_lote=len(pendientes))
+
+    # 2. Procesar el lote de reintentos
+    for run_id, revision, periodo, request_id in pendientes:
+        try:
+            # Reconstrucción relacional dinámica en memoria RAM
+            payload = reconstruir_json_paquete_salida(run_id, revision)
+            
+            # Despachar al cliente idempotente de OCI
+            resultado = storage_client.upload_package(
+                package_payload=payload,
+                periodo_referencia=periodo,
+                run_id=run_id,
+                numero_revision=revision,
+                request_id=request_id
+            )
+
+            # 3. Evaluar resultado y actualizar de forma atómica en SQLite
+            if resultado.status_almacenamiento == "guardado_con_exito":
+                with sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT_SEGUNDOS) as conn_update:
+                    conn_update.execute("""
+                        UPDATE evidencia_almacenamiento_oci
+                        SET status_almacenamiento = 'guardado_con_exito',
+                            comprobacion_lectura = 1
+                        WHERE run_id = ? AND numero_revision = ?;
+                    """, (run_id, revision))
+                    conn_update.commit()
+                
+                exitosos += 1
+                logger.info("reintento_sincronizacion_oci_exitoso", run_id=run_id, revision=revision)
+            else:
+                fallidos += 1
+                logger.warning("reintento_sincronizacion_oci_fallido_recurrente", run_id=run_id, error=resultado.mensaje_error)
+
+        except Exception as e:
+            fallidos += 1
+            logger.error("error_grave_iteracion_sincronizador", run_id=run_id, error=str(e))
+            continue
+
+    logger.info("sincronizacion_oci_finalizada", exitosos=exitosos, fallidos=fallidos)
+    return exitosos, fallidos
