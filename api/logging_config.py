@@ -14,15 +14,23 @@ from typing import Any
 
 import structlog
 
+# CORRECCIÓN (Riesgo 5): Se eliminó el carácter '.' de la clase de separadores
+# y se añadieron lookarounds negativos para puntos (?<![\w/.]) y (?![\w/.]),
+# evitando que direcciones IPv4 (ej. 10.0.10.245) o versiones semánticas sean
+# enmascaradas por error como "[telefono]" en los logs de la API, worker y runner.
 _PATRONES = (
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),
     (re.compile(r"(?i)\bbearer\s+\S+"), "bearer [redactado]"),
-    (re.compile(r"(?i)\b(token|secret|api[_-]?key|authorization)\b\s*[:=]?\s*\S+"), r"\1=[redactado]"),
-    (re.compile(r"(?<![\w/])\+?\d[\d\s().-]{7,}\d(?![\w/])"), "[telefono]"),
+    (
+        re.compile(r"(?i)\b(token|secret|api[_-]?key|authorization)\b\s*[:=]?\s*\S+"),
+        r"\1=[redactado]",
+    ),
+    (re.compile(r"(?<![\w/.])\+?\d[\d\s()-]{7,}\d(?![\w/.])"), "[telefono]"),
 )
 
 
 def redactar(valor: str) -> str:
+    """Aplica las reglas de redacción de PII sobre una cadena de texto."""
     for patron, reemplazo in _PATRONES:
         valor = patron.sub(reemplazo, valor)
     return valor
@@ -51,6 +59,7 @@ class _StdoutDiferido:
 
 
 def configurar_logging(nivel: str = "INFO") -> None:
+    """Configura structlog para emitir eventos JSON con redacción de PII."""
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
