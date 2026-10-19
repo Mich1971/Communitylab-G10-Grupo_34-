@@ -16,6 +16,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 from pydantic import BaseModel, Field, ValidationError
@@ -40,11 +41,12 @@ CONCURRENCIA_DEFECTO = 5
 REINTENTOS_VALIDACION = 2
 BACKOFF_BASE_SEG = 1.0
 BACKOFF_MAX_SEG = 10.0
+TIMEOUT_INFERENCIA_DEFECTO_SEG = 30.0
 MAX_CHARS_TEXTO = 2000
 FRACCION_INICIAL_TRUNCADO = 0.2
 
-# Marcador estable: el resumen identifica registros degradados por este
-# prefijo en vez de depender de texto libre incrustado en la lógica.
+# Marcador estable: el resumen y el orquestador identifican registros degradados
+# por este prefijo en vez de depender de texto libre incrustado en la lógica.
 PREFIJO_DEGRADACION = "Degradación por error de servicio tras reintentos"
 
 SENTIMIENTOS_OFICIALES = (
@@ -60,7 +62,10 @@ _RE_CREDENCIAL = re.compile(
     r"|bearer\s+[A-Za-z0-9._-]{8,}"
     r"|(?:api[_-]?key|token|secret|password|passwd)\s*[=:]\s*\S+)"
 )
-_RE_TELEFONO = re.compile(r"(?<!\w)\+?\d[\d\s().-]{7,}\d(?!\w)")
+# CORRECCIÓN (Riesgo 5): Se eliminó el punto '.' de la clase de separadores y se
+# añadieron lookarounds negativos para evitar enmascarar direcciones IPv4
+# (ej. 10.0.10.245), versiones semánticas o timestamps ISO-8601 en logs técnicos.
+_RE_TELEFONO = re.compile(r"(?<![\w.])\+?\d[\d\s()-]{7,}\d(?![\w.])")
 
 
 def _enmascarar_pii(texto: str) -> str:
@@ -80,7 +85,7 @@ def _truncar_texto_semantico(texto: str, max_chars: int = MAX_CHARS_TEXTO) -> st
 
 
 def _leer_entero_env(nombre: str, defecto: int) -> int:
-    """Único punto de lectura de entorno del módulo; valores inválidos usan el defecto."""
+    """Único punto de lectura de enteros de entorno del módulo; valores inválidos usan el defecto."""
     try:
         valor = int(os.environ.get(nombre, defecto))
     except ValueError:
@@ -88,25 +93,36 @@ def _leer_entero_env(nombre: str, defecto: int) -> int:
     return valor if valor >= 1 else defecto
 
 
+def _leer_flotante_env(nombre: str, defecto: float) -> float:
+    """Lectura segura de flotantes positivos desde variables de entorno (p. ej. timeouts)."""
+    try:
+        valor = float(os.environ.get(nombre, defecto))
+    except ValueError:
+        return defecto
+    return valor if valor > 0.0 else defecto
+
+
 def _resolver_proveedor(provider: str | None) -> str:
     return (provider or os.environ.get("LLM_PROVIDER") or PROVEEDOR_POR_DEFECTO).lower()
+
+
+def _fusionar_model_settings(agent: Any, extra_settings: dict[str, Any]) -> dict[str, Any]:
+    """CORRECCIÓN (Riesgo 1): Preserva los `model_settings` base del agente
+    (como `anthropic_cache_instructions`) al inyectar ajustes por ejecución
+    (p. ej. `temperature=0.0` en reintentos de validación).
+    """
+    base = getattr(agent, "model_settings", None)
+    if isinstance(base, dict):
+        return {**base, **extra_settings}
+    return dict(extra_settings)
 
 
 def _crear_mensaje_degradado(source_id: str, error: Exception) -> MensajeAnalizado:
     """Fallback semántico: puntaje 0, no publicable, `source_id` intacto.
 
-    CORRECCIÓN: antes se marcaba `requiere_soporte=False` y
-    `categoria_enrutamiento="Duda"`. Con `requiere_soporte=False`, un
-    registro degradado por una falla real de inferencia quedaba invisible
-    en `ResumenComunidad.alertas_soporte` siempre que el resto del lote sí
-    se procesara con éxito (`alertas_soporte` solo se nutre de mensajes con
-    `requiere_soporte=True` — ver `_calcular_resumen_comunidad`). El único
-    caso cubierto hasta ahora era la degradación total del lote, resuelta
-    por el mensaje genérico de respaldo. Con `requiere_soporte=True`, cada
-    degradación (parcial o total) queda localizable por `source_id` en
-    `alertas_soporte` sin que un curador tenga que recalcular nada.
-    `categoria_enrutamiento="Dificultad"` refleja mejor la semántica real
-    del caso (algo falló y requiere atención) que "Duda".
+    Marca `requiere_soporte=True` y `categoria_enrutamiento="Dificultad"`
+    para que cualquier degradación (parcial o total) quede localizable por
+    `source_id` en `ResumenComunidad.alertas_soporte`.
 
     Solo se registra el tipo de excepción: el mensaje original podría contener
     credenciales o fragmentos del prompt (M09).
@@ -142,13 +158,6 @@ class TelemetriaAnalisis(BaseModel):
     No es un contrato canónico: es un modelo interno de `ai_modules/`. Lo
     consume el orquestador para componer `MetadatosEjecucion` (Contrato 3)
     sin modificar `esquemas.py`.
-
-    Alcance de las cifras:
-    - `latencia_ms` es el tiempo de pared del lote completo. Las inferencias
-      corren en paralelo, así que NO es la suma de las latencias individuales.
-    - `tokens_*` suman solo las respuestas que el proveedor devolvió con
-      éxito. Los intentos que terminaron en excepción no informan uso, así
-      que en lotes con muchos reintentos el consumo real puede ser mayor.
     """
 
     proveedor: str
@@ -165,6 +174,11 @@ class TelemetriaAnalisis(BaseModel):
     def tokens_totales(self) -> int:
         return self.tokens_entrada + self.tokens_salida
 
+    @property
+    def caida_total_llm(self) -> bool:
+        """Indica al orquestador si el 100% del lote se degradó por fallo del LLM."""
+        return self.degradados >= self.total_procesados
+
     def a_metadatos_ejecucion(self) -> MetadatosEjecucion:
         """Conversión directa a los cuatro campos del Contrato 3."""
         return MetadatosEjecucion(
@@ -175,7 +189,7 @@ class TelemetriaAnalisis(BaseModel):
         )
 
 
-def _nombre_modelo(agent, proveedor: str) -> str:
+def _nombre_modelo(agent: Any, proveedor: str) -> str:
     nombre = getattr(getattr(agent, "model", None), "model_name", None)
     return nombre if isinstance(nombre, str) and nombre else f"{proveedor}:desconocido"
 
@@ -192,20 +206,32 @@ def _espera_backoff(intento: int) -> float:
 
 
 async def _ejecutar_inferencia_con_resiliencia(
-    agent,
+    agent: Any,
     interaccion: InteraccionValidada,
     proveedor: str,
     max_reintentos: int,
+    timeout_seg: float = TIMEOUT_INFERENCIA_DEFECTO_SEG,
 ) -> tuple[MensajeAnalizado, _Uso]:
     """Devuelve (mensaje, uso de tokens). Nunca propaga errores del proveedor."""
     entrada = _preparar_entrada(interaccion)
     fallos_validacion = 0
     ultimo_error: Exception = RuntimeError("sin_intentos")
+
     for intento in range(max_reintentos + 1):
-        # Tras un fallo de esquema se fuerza temperatura 0 para reducir variabilidad.
-        settings = {"temperature": 0.0} if fallos_validacion else None
+        # CORRECCIÓN (Riesgo 1): Si hubo fallo de esquema, forzamos temperature=0.0
+        # fusionándolo con los model_settings base del agente para no perder el caché.
+        settings = (
+            _fusionar_model_settings(agent, {"temperature": 0.0})
+            if fallos_validacion
+            else None
+        )
         try:
-            resultado = await agent.run(entrada, model_settings=settings)
+            # CORRECCIÓN (Riesgo 4): Timeout explícito por inferencia para evitar
+            # que un socket colgado retenga indefinidamente el semáforo en el runner.
+            resultado = await asyncio.wait_for(
+                agent.run(entrada, model_settings=settings),
+                timeout=timeout_seg,
+            )
             mensaje: MensajeAnalizado = resultado.output
             # Invariante de trazabilidad: el LLM no decide el source_id.
             mensaje = mensaje.model_copy(update={"source_id": interaccion.id})
@@ -222,10 +248,11 @@ async def _ejecutar_inferencia_con_resiliencia(
             fallos_validacion += 1
             if fallos_validacion > REINTENTOS_VALIDACION:
                 break
-        except Exception as exc:  # noqa: BLE001 — frontera de red: degradar, no tumbar el lote
+        except Exception as exc:  # noqa: BLE001 — incluye TimeoutError y errores de red
             ultimo_error = exc
             if intento < max_reintentos:
                 await asyncio.sleep(_espera_backoff(intento))
+
     logger.warning(
         "inferencia_degradada",
         source_id=interaccion.id,
@@ -234,36 +261,42 @@ async def _ejecutar_inferencia_con_resiliencia(
     return _crear_mensaje_degradado(interaccion.id, ultimo_error), _Uso()
 
 
-def _es_degradado(m: MensajeAnalizado) -> bool:
+def es_mensaje_degradado(m: MensajeAnalizado) -> bool:
+    """Verifica si un `MensajeAnalizado` proviene de una degradación elegante.
+
+    Se expone como función pública para que `orchestration/pipeline_runner.py`
+    pueda inspeccionar si existen mensajes genuinamente analizados antes de
+    invocar al generador de copys, sin depender únicamente de `registros_validos`.
+    """
     return m.puntuacion_relevancia.total == 0 and m.motivo_seleccion.startswith(
         PREFIJO_DEGRADACION
     )
 
 
+# Alias privado retrocompatible para llamadas o tests internos existentes
+_es_degradado = es_mensaje_degradado
+
+
+def tiene_analisis_utilizable(analisis: AnalisisCognitivo) -> bool:
+    """CORRECCIÓN (Riesgo 3): Devuelve `True` si al menos un mensaje del lote
+    fue analizado exitosamente por el LLM (no degradado).
+
+    Permite que `pipeline_runner.py` detecte caídas totales del proveedor LLM
+    incluso cuando `ResumenComunidad.registros_validos` vale 1 por restricción
+    del esquema Pydantic (`Field(..., ge=1)`).
+    """
+    return any(not es_mensaje_degradado(m) for m in analisis.mensajes_analizados)
+
+
 def _calcular_resumen_comunidad(
     mensajes: list[MensajeAnalizado], total_recibidos_en_lote: int
 ) -> ResumenComunidad:
-    """Agregación determinista; el LLM nunca calcula estadísticas del lote.
-
-    NOTA sobre `registros_rechazados`: este módulo solo recibe
-    `InteraccionValidada` — es decir, registros que ya superaron la
-    validación estructural del Contrato 1 (eso ocurre antes, en
-    `data_pipeline.validador` / `orchestration.pipeline_runner`). Por lo
-    tanto, el único tipo de "rechazo" que puede originarse dentro de esta
-    función es la degradación por fallo de inferencia del LLM, y es ese
-    conteo el que se reporta aquí — no hay ambigüedad con un eventual
-    conteo de rechazos de validación, que vive en otra capa.
-    """
-    degradados = sum(_es_degradado(m) for m in mensajes)
+    """Agregación determinista; el LLM nunca calcula estadísticas del lote."""
+    degradados = sum(es_mensaje_degradado(m) for m in mensajes)
     conteo: dict[str, int] = dict.fromkeys(SENTIMIENTOS_OFICIALES, 0)
     for m in mensajes:
         conteo[m.sentimiento] += 1
 
-    # CORRECCIÓN: `max(conteo, key=...)` resolvía cualquier empate a una
-    # sola categoría (la primera en orden de iteración), nunca a "Mixto" —
-    # pese a que el propio esquema (`ResumenComunidad.sentimiento_predominante`)
-    # documenta "Mixto" como valor esperado para un lote dividido. Ahora se
-    # detecta explícitamente cuántas categorías comparten el conteo máximo.
     if mensajes:
         maximo = max(conteo.values())
         categorias_en_maximo = [k for k, v in conteo.items() if v == maximo]
@@ -274,15 +307,28 @@ def _calcular_resumen_comunidad(
     temas = [t for m in mensajes for t in m.temas]
     temas_top = [t for t, _ in Counter(temas).most_common(5)] or ["General"]
     alertas = [f"[{m.source_id}] {m.motivo_seleccion}" for m in mensajes if m.requiere_soporte]
-    validos = len(mensajes) - degradados
-    if validos < 1:
-        # El contrato exige registros_validos >= 1; se deja constancia de la caída total.
-        alertas.append("Todos los registros del lote fueron degradados por indisponibilidad del LLM")
-        validos = 1
+
+    total_procesados = max(1, total_recibidos_en_lote)
+    validos_reales = len(mensajes) - degradados
+
+    if validos_reales < 1:
+        # CORRECCIÓN (Riesgo 3): El contrato en `esquemas.py` exige `registros_validos >= 1`.
+        # Para no violar la invariante aritmética del dashboard (validos + rechazados == total)
+        # cuando ocurre una caída total del LLM, se ajusta `rechazados_reportados` para que
+        # nunca exceda `total_procesados - 1`, dejando constancia explícita en `alertas_soporte`.
+        alertas.append(
+            "ALERTA CRÍTICA: Todos los registros del lote fueron degradados por indisponibilidad del LLM"
+        )
+        validos_reportados = 1
+        rechazados_reportados = max(0, total_procesados - 1)
+    else:
+        validos_reportados = validos_reales
+        rechazados_reportados = degradados
+
     return ResumenComunidad(
-        total_interacciones_procesadas=max(1, total_recibidos_en_lote),
-        registros_validos=validos,
-        registros_rechazados=degradados,
+        total_interacciones_procesadas=total_procesados,
+        registros_validos=validos_reportados,
+        registros_rechazados=rechazados_reportados,
         sentimiento_predominante=moda,
         distribucion_sentimiento=conteo,
         temas_principales=temas_top,
@@ -297,26 +343,9 @@ async def analizar_lote_cognitivo_con_telemetria(
     provider: str | None = None,
     max_concurrency: int | None = None,
     system_prompt: str | None = None,
+    timeout_seg: float | None = None,
 ) -> tuple[AnalisisCognitivo, TelemetriaAnalisis]:
-    """Igual que `analizar_lote_cognitivo`, pero devuelve además la telemetría
-    de la ejecución (modelo, versión de prompt, latencia y tokens), de la que
-    el orquestador compone `MetadatosEjecucion`. Es la implementación real;
-    `analizar_lote_cognitivo` es un envoltorio que conserva su firma pública.
-
-    Analiza un lote de interacciones ya validadas y devuelve el Contrato 2.
-
-    `max_concurrency` y los reintentos se resuelven desde
-    COGNITIVE_ANALYZER_CONCURRENCY y LLM_MAX_RETRIES si no se pasan.
-
-    `system_prompt` es opcional y por defecto usa el `SYSTEM_PROMPT` de
-    producción (instrucciones + catálogo few-shot + reanclaje). Se expone
-    como parámetro — en vez de quedar hardcodeado — únicamente para que el
-    arnés de calibración (`tests/test_calibration_eval.py`) pueda ejecutar
-    la Condición A (zero-shot, solo `INSTRUCCIONES_BASE`) y la Condición B
-    (few-shot, `SYSTEM_PROMPT`) contra la misma ruta de inferencia real que
-    corre en producción, en vez de reconstruir su propia lógica de
-    invocación por lote.
-    """
+    """Analiza un lote de interacciones ya validadas y devuelve `(AnalisisCognitivo, TelemetriaAnalisis)`."""
     if not interacciones:
         raise ValueError("analizar_lote_cognitivo requiere al menos una interacción validada")
 
@@ -325,6 +354,10 @@ async def analizar_lote_cognitivo_con_telemetria(
         "COGNITIVE_ANALYZER_CONCURRENCY", CONCURRENCIA_DEFECTO
     )
     max_reintentos = _leer_entero_env("LLM_MAX_RETRIES", MAX_REINTENTOS_DEFECTO)
+    timeout_efectivo = timeout_seg or _leer_flotante_env(
+        "LLM_INFERENCE_TIMEOUT_SEC", TIMEOUT_INFERENCIA_DEFECTO_SEG
+    )
+
     agent = CognitiveAgentFactory.create_agent(
         proveedor, system_prompt or SYSTEM_PROMPT, MensajeAnalizado
     )
@@ -332,16 +365,20 @@ async def analizar_lote_cognitivo_con_telemetria(
 
     async def _procesar(i: InteraccionValidada) -> tuple[MensajeAnalizado, _Uso]:
         async with semaforo:
-            return await _ejecutar_inferencia_con_resiliencia(agent, i, proveedor, max_reintentos)
+            return await _ejecutar_inferencia_con_resiliencia(
+                agent, i, proveedor, max_reintentos, timeout_seg=timeout_efectivo
+            )
 
     inicio = time.perf_counter()
     resultados = await asyncio.gather(*(_procesar(i) for i in interacciones))
     total_seg = time.perf_counter() - inicio
 
     mensajes = [m for m, _ in resultados]
+    degradados_reales = sum(es_mensaje_degradado(m) for m in mensajes)
     tokens_cacheados = sum(u.cacheados for _, u in resultados)
     tokens_entrada = sum(u.entrada for _, u in resultados)
     tokens_salida = sum(u.salida for _, u in resultados)
+
     resumen = _calcular_resumen_comunidad(mensajes, len(interacciones))
     telemetria = TelemetriaAnalisis(
         proveedor=proveedor,
@@ -352,7 +389,7 @@ async def analizar_lote_cognitivo_con_telemetria(
         tokens_salida=tokens_salida,
         tokens_cacheados=tokens_cacheados,
         total_procesados=len(mensajes),
-        degradados=resumen.registros_rechazados,
+        degradados=degradados_reales,
     )
 
     logger.info(
@@ -363,7 +400,8 @@ async def analizar_lote_cognitivo_con_telemetria(
         total_procesados=len(mensajes),
         latencia_total_ms=round(total_seg * 1000, 2),
         latencia_promedio_por_registro_ms=round(total_seg / len(mensajes) * 1000, 2),
-        degradados=resumen.registros_rechazados,
+        degradados=degradados_reales,
+        caida_total_llm=telemetria.caida_total_llm,
         tokens_cacheados=tokens_cacheados,
         tokens_entrada=tokens_entrada,
         tokens_salida=tokens_salida,
@@ -386,13 +424,9 @@ async def analizar_lote_cognitivo(
     provider: str | None = None,
     max_concurrency: int | None = None,
     system_prompt: str | None = None,
+    timeout_seg: float | None = None,
 ) -> AnalisisCognitivo:
-    """Analiza un lote de interacciones ya validadas y devuelve el Contrato 2.
-
-    Firma pública estable: delega en `analizar_lote_cognitivo_con_telemetria`
-    y descarta la telemetría. Quien necesite tokens y latencia (el
-    orquestador) debe llamar a esa función en su lugar.
-    """
+    """Analiza un lote de interacciones ya validadas y devuelve el Contrato 2."""
     analisis, _ = await analizar_lote_cognitivo_con_telemetria(
         interacciones,
         run_id,
@@ -400,5 +434,6 @@ async def analizar_lote_cognitivo(
         provider=provider,
         max_concurrency=max_concurrency,
         system_prompt=system_prompt,
+        timeout_seg=timeout_seg,
     )
     return analisis
