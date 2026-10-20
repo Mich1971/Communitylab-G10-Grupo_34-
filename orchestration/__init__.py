@@ -1,10 +1,7 @@
-from orchestration.pipeline_runner import crear_grafo_pipeline, ejecutar_pipeline
-from orchestration.state import PipelineState, RegistroRechazado, ResultadoPipeline
+"""Orquestación de CommunityLab (LangGraph).
 
-__all__ = [
-    "PipelineState",
-    "RegistroRechazado",
-    "ResultadoPipeline",
-    "crear_grafo_pipeline",
-    "ejecutar_pipeline",
-]
+Los módulos se importan de forma explícita (`orchestration.pipeline_runner`,
+`orchestration.resultado`, `orchestration.state`, `orchestration.worker`); este
+paquete no los importa aquí para que el worker no arrastre LangGraph ni el stack
+de IA hasta que realmente los necesite.
+"""
