@@ -73,6 +73,9 @@ def _archivos_raw(cliente):
     return sorted(p.name for p in cliente.cfg.raw_dir.iterdir())
 
 
+# --- configuración --------------------------------------------------------
+
+
 def test_arranque_falla_sin_secreto(monkeypatch, tmp_path):
     monkeypatch.delenv("COMMUNITYLAB_WEBHOOK_SECRET", raising=False)
     with pytest.raises(ValidationError):
@@ -100,10 +103,10 @@ def test_openapi_se_genera_cuando_se_habilita(tmp_path):
         assert URL in r.json()["paths"]
 
 
-@pytest.mark.parametrize(
-    "cabeceras",
-    [{}, {"X-Webhook-Secret": "incorrecto"}, {"X-Webhook-Secret": "ñ-no-ascii".encode()}],
-)
+# --- autenticación --------------------------------------------------------
+
+
+@pytest.mark.parametrize("cabeceras", [{}, {"X-Webhook-Secret": "incorrecto"}, {"X-Webhook-Secret": "ñ-no-ascii".encode()}])
 def test_post_sin_secreto_valido_devuelve_401_y_no_escribe(cliente, cabeceras):
     r = cliente.post(URL, json=_lote(), headers=cabeceras)
     assert r.status_code == 401
@@ -115,6 +118,9 @@ def test_401_antes_que_validar_el_cuerpo(cliente):
     assert r.status_code == 401
 
 
+# --- validación del sobre -------------------------------------------------
+
+
 def test_json_malformado_devuelve_422(cliente):
     r = cliente.post(URL, content=b"{no json", headers={**H, "Content-Type": "application/json"})
     assert r.status_code == 422
@@ -124,33 +130,6 @@ def test_sobre_sin_request_id_devuelve_422(cliente):
     cuerpo = _lote()
     del cuerpo["request_id"]
     assert cliente.post(URL, json=cuerpo, headers=H).status_code == 422
-
-
-def test_payload_plano_oficial_del_jurado_se_adapta_y_acepta_con_202(cliente):
-    """Mitigación Riesgo 1: si se envía el JSON plano del jurado (sin request_id,
-    sin id y sin metadata_origen en sus ítems), la API lo adapta con
-    `adaptar_payload_oficial()` y deposita un `IngestionLote` válido en `data/raw/`.
-    """
-    payload_jurado = {
-        "origen_comunidad": "Discord_Grupo_ONE_G10",
-        "periodo_referencia": "Semana_04",
-        "interacciones": [
-            {
-                "autor": "Mariana Souza",
-                "canal": "#logros-y-empleos",
-                "tipo": "testimonio",
-                "texto": "Quedé seleccionada como Desarrolladora Junior de IA!",
-            }
-        ],
-    }
-    r = cliente.post(URL, json=payload_jurado, headers=H)
-    assert r.status_code == 202
-    cuerpo = r.json()
-    assert cuerpo["request_id"].startswith("req_")
-    assert cuerpo["estado"] == "en_cola"
-    guardado = (cliente.cfg.raw_dir / f"{cuerpo['run_id']}.json").read_text(encoding="utf-8")
-    lote = IngestionLote.model_validate_json(guardado)
-    assert lote.interacciones[0].metadata_origen.plataforma == "Discord"
 
 
 def test_lote_sin_interacciones_devuelve_422(cliente):
@@ -196,6 +175,9 @@ def test_cuerpo_demasiado_grande_devuelve_413(tmp_path):
         assert list(cfg.raw_dir.iterdir()) == []
 
 
+# --- ingesta e idempotencia ----------------------------------------------
+
+
 def test_primer_envio_devuelve_202_y_deposita_el_archivo(cliente):
     r = cliente.post(URL, json=_lote(), headers=H)
     assert r.status_code == 202
@@ -206,7 +188,7 @@ def test_primer_envio_devuelve_202_y_deposita_el_archivo(cliente):
 
     assert _archivos_raw(cliente) == [f"{cuerpo['run_id']}.json"]  # sin temp_* residuales
     guardado = (cliente.cfg.raw_dir / f"{cuerpo['run_id']}.json").read_text(encoding="utf-8")
-    lote = IngestionLote.model_validate_json(guardado)
+    lote = IngestionLote.model_validate_json(guardado)  # el archivo es un IngestionLote completo
     assert lote.request_id == "req-001" and lote.periodo_referencia == "2026-W42"
 
 
@@ -228,9 +210,7 @@ def test_orden_de_claves_y_schema_version_implicito_no_cambian_la_huella(cliente
     cuerpo = _lote()
     del cuerpo["schema_version"]  # el valor por defecto es el mismo
     invertido = dict(reversed(list(cuerpo.items())))
-    r = cliente.post(
-        URL, content=json.dumps(invertido), headers={**H, "Content-Type": "application/json"}
-    )
+    r = cliente.post(URL, content=json.dumps(invertido), headers={**H, "Content-Type": "application/json"})
     assert r.status_code == 200
     assert r.json()["run_id"] == primero["run_id"]
 
@@ -261,6 +241,9 @@ def test_duplicado_refleja_el_estado_actual_del_run(cliente):
     assert r.status_code == 200 and r.json()["estado"] == "procesando"
 
 
+# --- recuperación ante fallos --------------------------------------------
+
+
 def test_fallo_de_escritura_devuelve_503_y_permite_reintentar(cliente, monkeypatch):
     def falla(*_a, **_k):
         raise OSError("disco lleno")
@@ -278,6 +261,7 @@ def test_fallo_de_escritura_devuelve_503_y_permite_reintentar(cliente, monkeypat
 def test_recepcion_en_curso_devuelve_503_y_tras_la_gracia_se_retoma(tmp_path):
     cfg = _settings(tmp_path, gracia_recepcion_s=0.05)
     with TestClient(create_app(cfg)) as c:
+        # Simula una caída entre el alta y el archivo: fila 'recibiendo', sin archivo.
         lote = IngestionLote.model_validate(_lote())
         huérfano = c.app.state.registro.registrar(lote.request_id, huella_lote(lote))
         assert huérfano.accion == "nuevo"
@@ -289,7 +273,7 @@ def test_recepcion_en_curso_devuelve_503_y_tras_la_gracia_se_retoma(tmp_path):
         time.sleep(0.1)
         r = c.post(URL, json=_lote(), headers=H)
         assert r.status_code == 202
-        assert r.json()["run_id"] == huérfano.run_id
+        assert r.json()["run_id"] == huérfano.run_id  # mismo run, ahora con archivo
         assert [p.name for p in cfg.raw_dir.iterdir()] == [f"{huérfano.run_id}.json"]
 
 
@@ -308,8 +292,11 @@ def test_escritura_atomica_no_deja_temporales_ni_destino_si_falla(tmp_path, monk
 def test_escritura_atomica_ignora_temporales_ajenos_y_deja_un_solo_archivo(tmp_path):
     lote = IngestionLote.model_validate(_lote())
     destino = escribir_lote_atomico(tmp_path, "run-x", lote)
-    escribir_lote_atomico(tmp_path, "run-x", lote)
+    escribir_lote_atomico(tmp_path, "run-x", lote)  # reescritura idéntica (retomar)
     assert [p.name for p in tmp_path.iterdir()] == [destino.name]
+
+
+# --- estado del run y salud ----------------------------------------------
 
 
 def test_get_run_requiere_secreto(cliente):
@@ -317,9 +304,7 @@ def test_get_run_requiere_secreto(cliente):
 
 
 def test_get_run_inexistente_o_con_formato_invalido_devuelve_404(cliente):
-    assert (
-        cliente.get("/api/v1/runs/run-20260101T000000Z-aaaaaaaaaaaa", headers=H).status_code == 404
-    )
+    assert cliente.get("/api/v1/runs/run-20260101T000000Z-aaaaaaaaaaaa", headers=H).status_code == 404
     assert cliente.get("/api/v1/runs/..%2F..%2Fetc", headers=H).status_code == 404
 
 
@@ -336,6 +321,9 @@ def test_get_run_devuelve_estado_y_sigue_al_runner(cliente):
 def test_health_no_requiere_autenticacion(cliente):
     r = cliente.get("/health")
     assert r.status_code == 200 and r.json() == {"status": "ok"}
+
+
+# --- logging y PII --------------------------------------------------------
 
 
 def test_los_logs_no_contienen_el_secreto_ni_pii(tmp_path, capsys):
@@ -356,13 +344,14 @@ def test_el_timestamp_del_log_no_se_redacta(tmp_path, capsys):
     datetime.fromisoformat(primera["timestamp"])
 
 
-def test_redactar_enmascara_patrones_de_pii_y_preserva_ips():
+def test_redactar_enmascara_patrones_de_pii():
     assert "ana@example.com" not in redactar("contacto ana@example.com")
     assert "+502 5555 1234" not in redactar("llamar al +502 5555 1234")
     assert "abc123" not in redactar("Authorization: Bearer abc123")
     assert redactar("run-20260101T000000Z-aaaaaaaaaaaa") == "run-20260101T000000Z-aaaaaaaaaaaa"
-    # Mitigación Riesgo 5: No debe enmascarar direcciones IPv4 ni versiones en logs
-    assert redactar("Host 10.0.10.245 v1.12.3-20261013") == "Host 10.0.10.245 v1.12.3-20261013"
+
+
+# --- registro: concurrencia y reglas --------------------------------------
 
 
 def test_carrera_de_peticiones_identicas_crea_un_solo_run(tmp_path):
@@ -404,9 +393,7 @@ def test_carrera_con_contenidos_distintos_deja_un_ganador_y_409_al_resto(tmp_pat
 def test_retomar_es_compare_and_set_solo_un_reintento_gana(tmp_path):
     t0 = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
     ahora = [t0]
-    reg = RegistroIdempotencia(
-        tmp_path / "db.sqlite", gracia_recepcion_s=30, reloj=lambda: ahora[0]
-    )
+    reg = RegistroIdempotencia(tmp_path / "db.sqlite", gracia_recepcion_s=30, reloj=lambda: ahora[0])
     reg.inicializar()
     reg.registrar("req-1", "b" * 64)
 
@@ -415,6 +402,7 @@ def test_retomar_es_compare_and_set_solo_un_reintento_gana(tmp_path):
 
     ahora[0] = t0 + timedelta(seconds=45)
     assert reg.registrar("req-1", "b" * 64).accion == "retomar"
+    # el primero que retoma renueva `actualizado_en`: el siguiente ya ve la gracia vigente
     assert reg.registrar("req-1", "b" * 64).accion == "en_curso"
 
 
@@ -457,6 +445,8 @@ def test_run_id_generado_es_seguro_para_rutas_oci():
 
 
 def test_logging_no_queda_atado_a_un_stdout_cerrado(tmp_path, capsys):
+    """structlog es global: tras reconfigurar, un stdout redirigido y cerrado
+    no debe romper los logs de otros módulos (regresión de pytest/uvicorn)."""
     import io
     import sys
 
@@ -471,3 +461,154 @@ def test_logging_no_queda_atado_a_un_stdout_cerrado(tmp_path, capsys):
     sys.stdout = viejo
     structlog.get_logger("otro_modulo").info("sigue_funcionando")
     assert "sigue_funcionando" in capsys.readouterr().out
+
+
+# --- payload plano del jurado (adaptador integrado) -------------------------
+
+
+def _plano(**extra) -> dict:
+    base = {
+        "origen_comunidad": "Discord_general",
+        "periodo_referencia": "2026-W42",
+        "interacciones": [{"autor": "Ana", "canal": "logros", "texto": "Terminé mi proyecto"}],
+    }
+    base.update(extra)
+    return base
+
+
+def test_plano_sin_request_id_reintento_es_idempotente(cliente):
+    """Antes: cada envío recibía un request_id aleatorio -> dos runs para el mismo payload."""
+    r1 = cliente.post(URL, json=_plano(), headers=H)
+    r2 = cliente.post(URL, json=_plano(), headers=H)
+    assert (r1.status_code, r2.status_code) == (202, 200)
+    assert r1.json()["run_id"] == r2.json()["run_id"]
+    assert r1.json()["request_id"] == r2.json()["request_id"]
+    assert r2.json()["duplicado"] is True
+    assert len(_archivos_raw(cliente)) == 1
+
+
+def test_plano_con_request_id_reintento_devuelve_200_y_no_409(cliente):
+    """Antes: la fecha fabricada con la hora de recepción cambiaba la huella -> 409."""
+    p = _plano(request_id="jurado-001")
+    r1 = cliente.post(URL, json=p, headers=H)
+    time.sleep(0.01)
+    r2 = cliente.post(URL, json=p, headers=H)
+    assert (r1.status_code, r2.status_code) == (202, 200)
+    assert r1.json()["run_id"] == r2.json()["run_id"]
+
+
+def test_plano_con_contenido_distinto_crea_otro_run(cliente):
+    otro = _plano(interacciones=[{"canal": "c", "texto": "Otro mensaje distinto"}])
+    r1 = cliente.post(URL, json=_plano(), headers=H)
+    r2 = cliente.post(URL, json=otro, headers=H)
+    assert (r1.status_code, r2.status_code) == (202, 202)
+    assert r1.json()["run_id"] != r2.json()["run_id"]
+
+
+@pytest.mark.parametrize(
+    "interacciones",
+    [
+        [{"id": "m1", "autor": "Ana", "canal": "c", "texto": "hola"}],  # con id, sin metadata_origen
+        [  # mixto: uno completo y otro sin id ni metadata
+            {
+                "id": "x", "canal": "c", "texto": "b",
+                "metadata_origen": {"plataforma": "D", "identificador_original": "1", "fecha": "2026-10-12T10:00:00Z"},
+            },
+            {"canal": "c", "texto": "a"},
+        ],
+        [{"autor": None, "canal": None, "tipo": None, "texto": None, "metadata_origen": None}],  # nulls
+    ],
+)
+def test_plano_en_variantes_que_el_adaptador_soporta_se_acepta(cliente, interacciones):
+    r = cliente.post(URL, json=_plano(interacciones=interacciones), headers=H)
+    assert r.status_code == 202, r.text
+
+
+def test_plano_con_request_id_y_schema_version_en_la_raiz_se_adapta(cliente):
+    r = cliente.post(URL, json=_plano(request_id="j-2", schema_version="1.1.0"), headers=H)
+    assert r.status_code == 202 and r.json()["request_id"] == "j-2"
+
+
+def test_archivo_depositado_tras_adaptar_es_un_ingestionlote_completo_con_fecha_derivada(cliente):
+    r = cliente.post(URL, json=_plano(), headers=H)
+    lote = IngestionLote.model_validate_json(
+        (cliente.cfg.raw_dir / f"{r.json()['run_id']}.json").read_text(encoding="utf-8")
+    )
+    meta = lote.interacciones[0].metadata_origen
+    assert meta.fecha == "2026-10-12T00:00:00+00:00"  # lunes de 2026-W42, no la hora de recepción
+    assert lote.interacciones[0].id.startswith(f"{lote.request_id}_msg_")
+
+
+def test_sobre_completo_al_que_solo_le_falta_request_id_no_se_adapta(cliente):
+    """Un emisor que olvida el request_id de un sobre completo recibe 422, no un id inventado."""
+    sobre = _lote()
+    del sobre["request_id"]
+    r = cliente.post(URL, json=sobre, headers=H)
+    assert r.status_code == 422
+    assert _archivos_raw(cliente) == []
+
+
+@pytest.mark.parametrize(
+    "cuerpo",
+    [
+        {"origen_comunidad": "D", "periodo_referencia": "2026-W42", "interacciones": ["texto suelto"]},
+        {"origen_comunidad": "D", "periodo_referencia": "2026-W42", "interacciones": []},
+        {"origen_comunidad": 1, "periodo_referencia": "2026-W42", "interacciones": [{"texto": "a"}]},
+        [1, 2, 3],
+    ],
+)
+def test_estructura_irreconocible_devuelve_422_sin_adaptar(cliente, cuerpo):
+    assert cliente.post(URL, json=cuerpo, headers=H).status_code == 422
+    assert _archivos_raw(cliente) == []
+
+
+def test_plano_con_periodo_inseguro_sigue_rechazandose(cliente):
+    r = cliente.post(URL, json=_plano(periodo_referencia="../../etc"), headers=H)
+    assert r.status_code == 422 and r.json()["error"] == "identificadores_invalidos"
+
+
+# --- redacción de logs ------------------------------------------------------
+
+
+def test_redactar_conserva_fechas_ip_y_versiones_pero_enmascara_telefonos():
+    assert redactar("periodo 2026-10-18") == "periodo 2026-10-18"
+    assert redactar("ip 10.0.10.245") == "ip 10.0.10.245"
+    assert redactar("version 1.2.3.4567") == "version 1.2.3.4567"
+    assert redactar("tel +502 5555 1234") == "tel [telefono]"
+    assert redactar("tel 5555-1234-99") == "tel [telefono]"
+
+
+# --- registro: intentos y migración ----------------------------------------
+
+
+def test_registrar_intento_acumula_y_devuelve_none_si_el_run_no_existe(tmp_path):
+    reg = RegistroIdempotencia(tmp_path / "c.db")
+    reg.inicializar()
+    run = reg.registrar("r1", "a" * 64).run_id
+    assert [reg.registrar_intento(run) for _ in range(3)] == [1, 2, 3]
+    assert reg.obtener_por_run_id(run).intentos == 3
+    assert reg.registrar_intento("run-20260101T000000Z-aaaaaaaaaaaa") is None
+
+
+def test_inicializar_migra_una_base_anterior_sin_columna_intentos(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "vieja.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE solicitudes_ingesta (request_id TEXT PRIMARY KEY, hash_sha256 TEXT NOT NULL, "
+        "run_id TEXT NOT NULL UNIQUE, estado TEXT NOT NULL, recibido_en TEXT NOT NULL, "
+        "actualizado_en TEXT NOT NULL)"
+    )
+    con.execute(
+        "INSERT INTO solicitudes_ingesta VALUES ('r0', ?, 'run-20260101T000000Z-aaaaaaaaaaaa', "
+        "'en_cola', 'x', 'x')",
+        ("a" * 64,),
+    )
+    con.commit()
+    con.close()
+    reg = RegistroIdempotencia(db)
+    reg.inicializar()
+    reg.inicializar()  # idempotente
+    fila = reg.obtener_por_run_id("run-20260101T000000Z-aaaaaaaaaaaa")
+    assert fila.intentos == 0 and fila.estado == "en_cola"
