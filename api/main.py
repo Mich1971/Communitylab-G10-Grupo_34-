@@ -97,15 +97,18 @@ def escribir_lote_atomico(raw_dir: Path, run_id: str, lote: IngestionLote) -> Pa
 
 
 def _es_payload_plano_jurado(datos: Any) -> bool:
-    """CORRECCIÓN (Riesgo 1): Detecta si un diccionario JSON corresponde al
-    formato plano oficial del jurado (tiene `origen_comunidad`, `periodo_referencia`
-    e `interacciones` no vacías donde ningún ítem trae `id` ni `metadata_origen`),
-    distinguiéndolo de un sobre `IngestionLote` al que simplemente le borraron
-    `request_id` por error.
+    """Decide si un JSON que NO cumple `IngestionLote` es el formato plano del jurado.
+
+    Se adapta cuando la estructura general es la esperada (`origen_comunidad` y
+    `periodo_referencia` de texto, `interacciones` no vacía de objetos) Y al menos
+    un ítem carece de `id` o de `metadata_origen`: eso es justo lo que el adaptador
+    sabe completar. Se admiten `request_id` y `schema_version` en la raíz.
+
+    Un sobre COMPLETO al que solo le falta `request_id` (todos los ítems con `id` y
+    `metadata_origen`) NO se adapta: es un error del emisor y se rechaza con 422,
+    en vez de inventarle un identificador.
     """
     if not isinstance(datos, dict):
-        return False
-    if "request_id" in datos or "schema_version" in datos:
         return False
     interacciones = datos.get("interacciones")
     if not isinstance(interacciones, list) or not interacciones:
@@ -114,25 +117,30 @@ def _es_payload_plano_jurado(datos: Any) -> bool:
         datos.get("periodo_referencia"), str
     ):
         return False
-    return all(
-        isinstance(item, dict) and "id" not in item and "metadata_origen" not in item
-        for item in interacciones
-    )
+    if not all(isinstance(item, dict) for item in interacciones):
+        return False
+    return any("id" not in item or "metadata_origen" not in item for item in interacciones)
 
 
-def _parsear_o_adaptar_lote(cuerpo: bytes) -> IngestionLote:
-    """Valida contra `IngestionLote` o adapta automáticamente si es el JSON plano del jurado."""
+def _parsear_o_adaptar_lote(cuerpo: bytes) -> tuple[IngestionLote, bool]:
+    """Devuelve `(lote, adaptado)`: valida contra `IngestionLote` o, si es el JSON
+    plano del jurado, lo adapta de forma determinista (mismo payload -> misma huella)."""
     try:
-        return IngestionLote.model_validate_json(cuerpo)
+        return IngestionLote.model_validate_json(cuerpo), False
     except ValidationError as exc_original:
         try:
             crudo = json.loads(cuerpo)
-        except Exception:
+        except ValueError:  # JSONDecodeError y UnicodeDecodeError
             raise exc_original from None
-        if _es_payload_plano_jurado(crudo):
+        if not _es_payload_plano_jurado(crudo):
+            raise exc_original from None
+        try:
             adaptado = adaptar_payload_oficial(crudo)
-            return IngestionLote.model_validate(adaptado)
-        raise exc_original
+        except Exception:  # noqa: BLE001 - estructura inesperada: se informa el 422 original
+            log.warning("adaptacion_fallida")
+            raise exc_original from None
+        # Si el resultado adaptado sigue siendo inválido, ese ValidationError sube tal cual.
+        return IngestionLote.model_validate(adaptado), True
 
 
 def _error(
@@ -244,7 +252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if cuerpo is None:
             return _error(413, "cuerpo_demasiado_grande", f"Máximo {cfg.max_body_bytes} bytes")
         try:
-            lote = _parsear_o_adaptar_lote(cuerpo)
+            lote, adaptado = _parsear_o_adaptar_lote(cuerpo)
         except ValidationError as exc:
             return JSONResponse(
                 status_code=422, content={"error": "sobre_invalido", "detalle": _errores_422(exc)}
@@ -311,6 +319,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ingesta_recibida",
             accion=res.accion,
             interacciones=len(lote.interacciones),
+            adaptado=adaptado,
             hash=huella[:12],
         )
         return JSONResponse(

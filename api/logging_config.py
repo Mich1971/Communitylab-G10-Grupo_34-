@@ -25,7 +25,8 @@ _PATRONES = (
         re.compile(r"(?i)\b(token|secret|api[_-]?key|authorization)\b\s*[:=]?\s*\S+"),
         r"\1=[redactado]",
     ),
-    (re.compile(r"(?<![\w/.])\+?\d[\d\s()-]{7,}\d(?![\w/.])"), "[telefono]"),
+    # El `(?!\d{4}-\d{2}-\d{2}\b)` evita enmascarar fechas ISO simples (2026-10-18).
+    (re.compile(r"(?<![\w/.])(?!\d{4}-\d{2}-\d{2}\b)\+?\d[\d\s()-]{7,}\d(?![\w/.])"), "[telefono]"),
 )
 
 

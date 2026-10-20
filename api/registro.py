@@ -42,6 +42,9 @@ ESTADOS = (
     "sin_contenido_publicable",
     "fallido",
 )
+ESTADOS_TERMINALES = frozenset(
+    {"completado", "sin_registros_validos", "sin_contenido_publicable", "fallido"}
+)
 
 _DDL = f"""
 CREATE TABLE IF NOT EXISTS solicitudes_ingesta (
@@ -49,6 +52,7 @@ CREATE TABLE IF NOT EXISTS solicitudes_ingesta (
     hash_sha256    TEXT NOT NULL CHECK (length(hash_sha256) = 64),
     run_id         TEXT NOT NULL UNIQUE,
     estado         TEXT NOT NULL CHECK (estado IN ({", ".join(repr(e) for e in ESTADOS)})),
+    intentos       INTEGER NOT NULL DEFAULT 0 CHECK (intentos >= 0),
     recibido_en    TEXT NOT NULL,
     actualizado_en TEXT NOT NULL
 );
@@ -89,6 +93,7 @@ class SolicitudIngesta:
     estado: str
     recibido_en: str
     actualizado_en: str
+    intentos: int = 0
 
 
 def generar_run_id(ahora: datetime) -> str:
@@ -132,6 +137,13 @@ class RegistroIdempotencia:
             # WAL permite lecturas (Streamlit, runner) durante las escrituras.
             con.execute("PRAGMA journal_mode = WAL")
             con.executescript(_DDL)
+            # Migración de bases creadas antes de existir `intentos`.
+            columnas = {f["name"] for f in con.execute("PRAGMA table_info(solicitudes_ingesta)")}
+            if "intentos" not in columnas:
+                con.execute(
+                    "ALTER TABLE solicitudes_ingesta "
+                    "ADD COLUMN intentos INTEGER NOT NULL DEFAULT 0"
+                )
 
     def comprobar(self) -> None:
         """Lanza si la base no responde (usado por /health)."""
@@ -210,6 +222,33 @@ class RegistroIdempotencia:
         with self._conexion() as con:
             return con.execute(sql, params).rowcount == 1
 
+    def registrar_intento(self, run_id: str) -> int | None:
+        """Suma un intento de procesamiento y devuelve el total acumulado.
+
+        Lo llama el worker ANTES de ejecutar, de modo que un lote que mata el
+        proceso en mitad de la ejecución igualmente queda contado. Devuelve
+        None si el `run_id` no está registrado (lote manual sin registro).
+        """
+        with self._conexion() as con:
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                cur = con.execute(
+                    "UPDATE solicitudes_ingesta SET intentos = intentos + 1, actualizado_en = ? "
+                    "WHERE run_id = ?",
+                    (_iso(self._reloj()), run_id),
+                )
+                total = None
+                if cur.rowcount == 1:
+                    total = con.execute(
+                        "SELECT intentos FROM solicitudes_ingesta WHERE run_id = ?", (run_id,)
+                    ).fetchone()["intentos"]
+                con.execute("COMMIT")
+                return total
+            except BaseException:
+                if con.in_transaction:
+                    con.execute("ROLLBACK")
+                raise
+
     def descartar_recepcion(self, run_id: str) -> None:
         """Borra una recepción fallida (no llegó a dejar archivo) para que
         el cliente pueda reintentar desde cero. Solo afecta a `recibiendo`."""
@@ -224,8 +263,8 @@ class RegistroIdempotencia:
     def obtener_por_run_id(self, run_id: str) -> SolicitudIngesta | None:
         with self._conexion() as con:
             fila = con.execute(
-                "SELECT request_id, hash_sha256, run_id, estado, recibido_en, actualizado_en "
-                "FROM solicitudes_ingesta WHERE run_id = ?",
+                "SELECT request_id, hash_sha256, run_id, estado, recibido_en, actualizado_en, "
+                "intentos FROM solicitudes_ingesta WHERE run_id = ?",
                 (run_id,),
             ).fetchone()
         return SolicitudIngesta(**dict(fila)) if fila else None
