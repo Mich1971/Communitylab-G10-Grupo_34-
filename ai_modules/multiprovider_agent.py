@@ -27,6 +27,7 @@ ejecuciones, sin depender de que cada `.run()` la repita.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import structlog
@@ -44,6 +45,26 @@ PROVEEDORES_SOPORTADOS = ("openai", "anthropic", "gemini")
 # procesamiento consecutivos; se deja como constante para no enterrar un
 # "magic value" dentro de la lógica de construcción del agente.
 ANTHROPIC_CACHE_TTL = "5m"
+
+# Modelos por defecto y variable de entorno que los sustituye. Los
+# identificadores se retiran con el tiempo (claude-3-5-haiku-20241022 y
+# gemini-1.5-flash ya no existen), así que NINGUNO queda fijo en el código:
+# cambiar de modelo es cambiar una variable de entorno, no editar y desplegar.
+MODELOS_POR_DEFECTO = {
+    "openai": ("OPENAI_MODEL", "gpt-4o-mini"),
+    "anthropic": ("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+    "gemini": ("GEMINI_MODEL", "gemini-2.5-flash"),
+}
+
+
+def resolver_modelo(provider: str) -> str:
+    """Nombre del modelo del proveedor: variable de entorno o valor por defecto.
+
+    Una variable vacía o solo con espacios se ignora (un `.env` con
+    `ANTHROPIC_MODEL=` no debe producir un modelo con nombre vacío).
+    """
+    variable, defecto = MODELOS_POR_DEFECTO[provider.lower()]
+    return (os.environ.get(variable) or "").strip() or defecto
 
 
 class ProveedorNoSoportadoError(ValueError):
@@ -83,7 +104,7 @@ class CognitiveAgentFactory:
             # Caching implícito: OpenAI detecta por sí mismo la coincidencia
             # de prefijo cuando el system_prompt es idéntico entre llamadas.
             # No existe un model_settings de caché que activar explícitamente.
-            model = OpenAIChatModel("gpt-4o-mini")
+            model = OpenAIChatModel(resolver_modelo("openai"))
             agent = Agent(
                 model=model,
                 output_type=result_schema,
@@ -94,7 +115,7 @@ class CognitiveAgentFactory:
             # Caching declarativo: se activa mediante AnthropicModelSettings,
             # pasado como model_settings del Agent para que se aplique a
             # todas sus ejecuciones sin que el llamador deba repetirlo.
-            model = AnthropicModel("claude-3-5-haiku-20241022")
+            model = AnthropicModel(resolver_modelo("anthropic"))
             settings: AnthropicModelSettings = {
                 "anthropic_cache_instructions": ANTHROPIC_CACHE_TTL,
             }
@@ -110,7 +131,7 @@ class CognitiveAgentFactory:
             # se evita deliberadamente el recurso CachedContent explícito
             # para no introducir un cache_id que el backend tendría que
             # persistir, rompiendo el diseño sin estado del agente.
-            model = GoogleModel("gemini-1.5-flash")
+            model = GoogleModel(resolver_modelo("gemini"))
             agent = Agent(
                 model=model,
                 output_type=result_schema,
@@ -126,6 +147,18 @@ class CognitiveAgentFactory:
             modelo=model.model_name,
         )
         return agent
+
+    @staticmethod
+    def read_usage(resultado: Any) -> Any:
+        """Uso de tokens de un resultado de `agent.run()`, sea `usage` método o propiedad.
+
+        En PydanticAI 2.x `AgentRunResult.usage` es una PROPIEDAD; en 1.x era el
+        método `usage()`. Llamar siempre `usage()` lanzaba `TypeError` con la
+        versión actual y hacía degradar CADA mensaje como si el LLM estuviera
+        caído. Esta función acepta ambas formas.
+        """
+        uso = resultado.usage
+        return uso() if callable(uso) else uso
 
     @staticmethod
     def extract_cached_tokens(provider: str, raw_usage: Any) -> int:

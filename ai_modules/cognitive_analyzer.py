@@ -158,6 +158,13 @@ class TelemetriaAnalisis(BaseModel):
     No es un contrato canónico: es un modelo interno de `ai_modules/`. Lo
     consume el orquestador para componer `MetadatosEjecucion` (Contrato 3)
     sin modificar `esquemas.py`.
+
+    Alcance de las cifras:
+    - `latencia_ms` es el tiempo de pared del lote completo. Las inferencias
+      corren en paralelo, así que NO es la suma de las latencias individuales.
+    - `tokens_*` suman solo las respuestas que el proveedor devolvió con
+      éxito. Los intentos que terminaron en excepción no informan uso, así
+      que en lotes con muchos reintentos el consumo real puede ser mayor.
     """
 
     proveedor: str
@@ -235,7 +242,9 @@ async def _ejecutar_inferencia_con_resiliencia(
             mensaje: MensajeAnalizado = resultado.output
             # Invariante de trazabilidad: el LLM no decide el source_id.
             mensaje = mensaje.model_copy(update={"source_id": interaccion.id})
-            uso_crudo = resultado.usage()
+            # `AgentRunResult.usage` es propiedad en PydanticAI 2.x y método en 1.x:
+            # `read_usage` acepta ambas (llamar siempre `usage()` degradaba TODO).
+            uso_crudo = CognitiveAgentFactory.read_usage(resultado)
             entrada_tok, salida_tok = CognitiveAgentFactory.extract_token_counts(uso_crudo)
             uso = _Uso(
                 cacheados=CognitiveAgentFactory.extract_cached_tokens(proveedor, uso_crudo),
