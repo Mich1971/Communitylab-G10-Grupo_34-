@@ -65,6 +65,13 @@ class InteraccionValidada(BaseModel):
 # =====================================================================
 
 
+# Alias compartidos por MensajeAnalizado (Contrato 2) y CasoNoPublicable
+# (Contrato 3): una sola definición evita que los valores permitidos se
+# desincronicen entre ambos contratos.
+Sentimiento = Literal["Altamente Positivo", "Positivo", "Neutro", "Dificultad/Negativo"]
+CategoriaEnrutamiento = Literal["Logro", "Duda", "Dificultad"]
+
+
 class PuntuacionRelevancia(BaseModel):
     evidencia_explicita: int = Field(..., ge=0, le=2)
     utilidad_comunitaria: int = Field(..., ge=0, le=2)
@@ -79,8 +86,8 @@ class PuntuacionRelevancia(BaseModel):
 
 class MensajeAnalizado(BaseModel):
     source_id: str = Field(..., description="Referencia exacta al id del mensaje")
-    sentimiento: Literal["Altamente Positivo", "Positivo", "Neutro", "Dificultad/Negativo"]
-    categoria_enrutamiento: Literal["Logro", "Duda", "Dificultad"]
+    sentimiento: Sentimiento
+    categoria_enrutamiento: CategoriaEnrutamiento
     regla_aplicada: str = Field(..., description="Criterio documentado para derivar el contenido")
     temas: List[str] = Field(..., min_length=1)
     entidades_relevantes: List[str] = Field(default_factory=list)
@@ -127,9 +134,46 @@ class ResumenSemanal(BaseModel):
     source_ids: List[str] = Field(..., min_length=1, description="IDs de mensajes que respaldan la síntesis")
 
 
+class CasoNoPublicable(BaseModel):
+    """Mensaje analizado que NO califica para difusión pública
+    (`apto_para_publicacion=False`), expuesto al curador dentro del paquete.
+
+    Es una vista derivada de `MensajeAnalizado`: debe construirse de forma
+    determinista con `desde_mensaje_analizado`, nunca a partir de texto
+    generado por un LLM.
+    """
+
+    source_id: str = Field(..., description="Referencia exacta al id del mensaje")
+    sentimiento: Sentimiento
+    categoria_enrutamiento: CategoriaEnrutamiento
+    temas: List[str] = Field(..., min_length=1)
+    requiere_soporte: bool = Field(default=False, description="Marca casos que requieren canalización o mentoría")
+    motivo_seleccion: str = Field(..., min_length=10, description="Justificación objetiva de la puntuación")
+
+    @classmethod
+    def desde_mensaje_analizado(cls, mensaje: "MensajeAnalizado") -> "CasoNoPublicable":
+        """Copia exacta de los campos homónimos; rechaza mensajes aptos."""
+        if mensaje.apto_para_publicacion:
+            raise ValueError(
+                f"El mensaje {mensaje.source_id!r} es apto para publicación; no puede ser un caso no publicable"
+            )
+        return cls(
+            source_id=mensaje.source_id,
+            sentimiento=mensaje.sentimiento,
+            categoria_enrutamiento=mensaje.categoria_enrutamiento,
+            temas=list(mensaje.temas),
+            requiere_soporte=mensaje.requiere_soporte,
+            motivo_seleccion=mensaje.motivo_seleccion,
+        )
+
+
 class ActivosGenerados(BaseModel):
     post_linkedin: PostLinkedIn
     resumen_semanal: ResumenSemanal
+    casos_no_publicables: List[CasoNoPublicable] = Field(
+        default_factory=list,
+        description="Mensajes con apto_para_publicacion=False, para revisión del curador (puede estar vacía)",
+    )
 
 
 class MetadatosEjecucion(BaseModel):
