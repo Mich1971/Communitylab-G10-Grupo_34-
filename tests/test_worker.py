@@ -12,6 +12,7 @@ from api.main import escribir_lote_atomico, huella_lote
 from api.registro import RegistroIdempotencia
 from esquemas import IngestionLote
 from orchestration.worker import WorkerLocal, WorkerYaEnEjecucion
+from orchestration.worker import main as worker_main
 
 
 def _lote(rid: str) -> IngestionLote:
@@ -199,3 +200,13 @@ def test_correr_procesa_y_se_detiene_con_el_evento(entorno):
 
     asyncio.run(escenario())
     assert _estado(registro, run_id) == "completado"
+
+
+def test_main_sin_configuracion_de_la_api_falla_rapido_con_mensaje_claro(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # sin `.env` a la vista
+    monkeypatch.delenv("COMMUNITYLAB_WEBHOOK_SECRET", raising=False)
+
+    with pytest.raises(SystemExit) as salida:
+        worker_main()
+
+    assert "COMMUNITYLAB_WEBHOOK_SECRET" in str(salida.value)

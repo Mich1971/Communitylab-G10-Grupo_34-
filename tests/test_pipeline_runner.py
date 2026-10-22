@@ -342,6 +342,22 @@ def test_fallido_si_una_excepcion_no_controlada_interrumpe_el_grafo(db_path, oci
     assert [r.mensaje_id for r in resultado.registros_rechazados] == ["m4"]
 
 
+def test_fallido_desde_archivo_conserva_el_request_id_leido_por_el_nodo_1(db_path, oci, monkeypatch, tmp_path):
+    async def explota(*_a, **_k):
+        raise RuntimeError("fallo inesperado del analizador")
+
+    monkeypatch.setattr(pr, "analizar_lote_cognitivo_con_telemetria", explota)
+    pipeline = CommunityLabPipeline(oci_client=oci, db_manager=LocalDatabaseManager(db_path))
+    ruta = tmp_path / f"{RUN_ID}.json"
+    ruta.write_text(_lote(request_id="req-archivo").model_dump_json(), encoding="utf-8")
+
+    resultado = asyncio.run(pipeline.ejecutar_desde_archivo(ruta, RUN_ID))
+
+    assert resultado.estado_flujo == "fallido"
+    assert resultado.request_id == "req-archivo"
+    assert pipeline._request_id_por_run == {}  # sin fugas entre ejecuciones
+
+
 # ---------------------------------------------------------------------------
 # Invariantes de trazabilidad (sección 6.3)
 # ---------------------------------------------------------------------------

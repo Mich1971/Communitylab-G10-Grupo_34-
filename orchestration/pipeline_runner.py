@@ -197,6 +197,9 @@ class CommunityLabPipeline:
     ) -> None:
         self.oci_client = oci_client or OCIStorageClient()
         self.db_manager = db_manager or LocalDatabaseManager()
+        # `request_id` leído por el Nodo 1 cuando el lote entra por archivo: si un nodo
+        # posterior lanza, `inicial["request_id"]` sigue vacío y se recupera de aquí.
+        self._request_id_por_run: dict[str, str] = {}
         self.workflow = self._construir_grafo()
         self.app = self.workflow.compile()
 
@@ -318,6 +321,7 @@ class CommunityLabPipeline:
                 "estado_flujo": "validado",
             }
 
+        self._request_id_por_run[run_id] = lote.request_id
         validos, rechazados = validar_lote_crudo(lote, run_id=run_id)
         # Los rechazos se persisten de inmediato, antes de cualquier paso que pueda fallar.
         await asyncio.to_thread(
@@ -428,7 +432,12 @@ class CommunityLabPipeline:
         return bucket if isinstance(bucket, str) and bucket else BUCKET_POR_DEFECTO
 
     def _conservar_en_disco(self, paquete: PaqueteSalida) -> Path | None:
-        """Copia local para `retry_upload_from_disk()` cuando OCI falla (M07)."""
+        """Copia local para `retry_upload_from_disk()` cuando OCI falla (M07).
+
+        El nombre `{run_id}-revision-001.json` es solo informativo: el reintento recibe la
+        ruta explícita junto con `run_id`, `request_id` (ambos dentro del JSON),
+        `periodo_referencia` y `numero_revision` (ambos en el log de advertencia).
+        """
         db_path = getattr(self.db_manager, "db_path", None)
         if not isinstance(db_path, str):
             return None
@@ -515,11 +524,15 @@ class CommunityLabPipeline:
         evidencia = await self._subir_a_oci(paquete, periodo, run_id, request_id)
         if evidencia.status_almacenamiento != "guardado_con_exito":
             archivo = await asyncio.to_thread(self._conservar_en_disco, paquete)
+            # Datos exactos que exige `retry_upload_from_disk()` para reintentar sin ambigüedad.
             bound_log.warning(
                 "oci_guardado_error_paquete_conservado",
                 ruta_local=str(archivo) if archivo else None,
+                periodo_referencia=periodo,
+                numero_revision=NUMERO_REVISION_INICIAL,
             )
-        paquete.almacenamiento_oci = evidencia
+        # `PaqueteSalida` no tiene `validate_assignment`: se reconstruye para revalidar la evidencia.
+        paquete = PaqueteSalida.model_validate({**paquete.model_dump(), "almacenamiento_oci": evidencia})
 
         # Paquete de curaduría y evidencia de OCI (también `guardado_error`) en SQLite.
         await asyncio.to_thread(self.db_manager.registrar_paquete, paquete)
@@ -663,10 +676,11 @@ class CommunityLabPipeline:
             filas = await asyncio.to_thread(self.db_manager.leer_rechazados, inicial["run_id"])
         except Exception:  # noqa: BLE001 — el manejador de fallos nunca debe lanzar
             filas = []
+        request_id = inicial["request_id"] or self._request_id_por_run.get(inicial["run_id"])
         return ResultadoPipeline(
             estado_flujo="fallido",
             run_id=inicial["run_id"],
-            request_id=inicial["request_id"] or DESCONOCIDO,
+            request_id=request_id or DESCONOCIDO,
             registros_rechazados=[_a_registro_rechazado(f) for f in filas],
             errores=[f"{type(exc).__name__}: {exc}"],
         )
@@ -679,6 +693,9 @@ class CommunityLabPipeline:
         except Exception as exc:  # noqa: BLE001 — toda excepción técnica se devuelve como `fallido`
             bound_log.exception("pipeline_fallido", error=str(exc))
             resultado = await self._resultado_fallido(inicial, exc)
+            bound_log = bound_log.bind(request_id=resultado.request_id)
+        finally:
+            self._request_id_por_run.pop(inicial["run_id"], None)
         try:
             # Estado terminal para consultas históricas (spec §8.8); nunca debe abortar el flujo.
             await asyncio.to_thread(

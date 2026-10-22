@@ -42,6 +42,7 @@ except ImportError:  # pragma: no cover - entorno POSIX
     msvcrt = None  # type: ignore[assignment]
 
 import structlog
+from pydantic import ValidationError
 
 from api.registro import ESTADOS, RegistroIdempotencia
 
@@ -216,7 +217,16 @@ def main() -> None:
     from api.config import Settings
     from api.logging_config import configurar_logging
 
-    cfg = Settings()
+    try:
+        cfg = Settings()
+    except ValidationError as exc:
+        # El worker comparte `.env` con la API (mismo `data_dir` y SQLite), por eso
+        # hereda sus variables obligatorias; se falla rápido con un mensaje claro.
+        campos = ", ".join(str(e["loc"][0]) for e in exc.errors())
+        raise SystemExit(
+            f"Configuración inválida para el worker (comparte .env con la API): {campos}. "
+            "Define COMMUNITYLAB_WEBHOOK_SECRET (mín. 16 caracteres) y demás variables en .env."
+        ) from exc
     configurar_logging(cfg.log_level)
     registro = RegistroIdempotencia(cfg.db_path, gracia_recepcion_s=cfg.gracia_recepcion_s)
     registro.inicializar()
