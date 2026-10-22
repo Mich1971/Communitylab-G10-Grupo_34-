@@ -1,5 +1,10 @@
 # CommunityLab: panel de curaduría
 
+**Entrega actualizada del módulo (Sergio, 14/10/2026):** consultar
+[diseño, implementación, ejecución, conexiones, pruebas y pendientes](../docs/panel-sergio.md).
+Ese documento distingue `main`, los PR #17/#18 pendientes y la nueva rama SQLite.
+Las verificaciones fechadas más abajo se conservan como antecedentes históricos.
+
 Diseño aprobado: variante clara con acento verde petróleo, navegación en cuatro pasos y mensajes originales junto al análisis. Referencia visual: [`docs/screenshots/00-mockup-aprobado.png`](../docs/screenshots/00-mockup-aprobado.png). Logo oficial integrado en la barra lateral desde `ui/assets/communitylab-logo.png`.
 
 Capturas de las 4 pantallas (carga, resultados, edición/aprobación con el camino de rechazo, almacenamiento) en [`docs/screenshots/`](../docs/screenshots/) y en el [README principal](../README.md) (sección "Panel de curaduría").
