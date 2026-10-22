@@ -15,6 +15,19 @@ def click(app, label):
     assert not app.exception
 
 
+def test_panel_arranca_sin_cargar_un_lote():
+    """El punto de entrada debe cargar desde un clon limpio del repositorio.
+
+    Detecta regresiones de integración, como importar el validador desde su
+    antigua ubicación en la raíz, antes de probar acciones de la interfaz.
+    No necesita credenciales de IA ni de OCI.
+    """
+    app = AppTest.from_file(str(ROOT / 'ui/app.py')).run()
+    assert not app.exception, [error.message for error in app.exception]
+    assert app.title[0].value == 'Empieza con tu comunidad'
+    assert any(button.label == 'Probar con datos de ejemplo' for button in app.button)
+
+
 def test_review_flow_and_edit_invalidation():
     app = AppTest.from_file(str(ROOT / 'ui/app.py')).run()
     click(app, 'Probar con datos de ejemplo')
