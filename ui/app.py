@@ -12,7 +12,9 @@ from pydantic import ValidationError
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from esquemas import ActivosGenerados, EstadoRevision, IngestionLote, MetadatosEjecucion, PaqueteSalida
-from validador import validar_lote_crudo
+# Consumir la validación oficial de Data Engineering desde su paquete actual.
+# El módulo dejó de estar en la raíz; mantener una copia local duplicaría reglas.
+from data_pipeline.validador import validar_lote_crudo
 from ui.mock_pipeline import analizar_mock, generar_copys_mock, generar_run_id
 from ui.storage_demo import guardar_local
 
@@ -62,6 +64,8 @@ def load_batch(raw):
         validos, rechazados = validar_lote_crudo(payload)
     except (ValidationError, ValueError) as exc:
         st.error('No pudimos cargar el lote. Revisa que sea un JSON con los campos requeridos.')
+        if st.session_state.payload:
+            st.info('El lote anterior y sus borradores siguen disponibles. Corrige el archivo y vuelve a validarlo.')
         with st.expander('Detalles para corregir el archivo'):
             st.text(str(exc))
         return
@@ -99,12 +103,17 @@ def carga():
             stats([(len(st.session_state.payload.interacciones), 'Recibidos'),
                    (len(st.session_state.validos), 'Válidos'), (len(st.session_state.rechazados), 'Rechazados')])
             st.caption(st.session_state.payload.origen_comunidad + ' · ' + st.session_state.payload.periodo_referencia)
+            if st.session_state.validos:
+                st.success(f'{len(st.session_state.validos)} mensajes listos. Puedes continuar aunque haya registros rechazados.')
             for item in st.session_state.rechazados:
                 with st.expander('Registro rechazado · ' + item['id']):
                     st.warning('El mensaje está vacío.' if not (item.get('texto_crudo') or '').strip()
                                else 'El registro contiene datos inválidos. Revisa sus campos y la fecha.')
                     st.caption('Los demás mensajes válidos pueden continuar.')
-                    st.text(item['error'])
+                    # El diagnóstico original se conserva para soporte sin presentarlo
+                    # como la instrucción principal para quien revisa el lote.
+                    st.caption('Detalle técnico de validación')
+                    st.code(item['error'], language=None, wrap_lines=True)
     if st.session_state.validos:
         st.subheader('Vista previa de mensajes')
         for item in st.session_state.validos:
@@ -133,6 +142,7 @@ def resultados():
         footer(previous=0)
         return
     messages = st.session_state.analisis.mensajes_analizados
+    st.info('Análisis de demostración terminado. Revisa las fuentes antes de preparar los borradores; las categorías se obtuvieron con reglas locales.')
     stats([(len(messages), 'mensajes analizados'),
            (sum(m.categoria_enrutamiento == 'Logro' for m in messages), 'logros'),
            (sum(m.categoria_enrutamiento == 'Duda' for m in messages), 'dudas')])
@@ -211,7 +221,15 @@ def edicion():
     st.divider()
     revision = st.session_state.revision
     st.subheader(f'Revisión {revision.numero_revision} · {revision.estado.capitalize()}')
+    # La decisión humana es independiente de publicar o persistir el paquete.
+    if revision.estado == 'rechazado':
+        st.warning('Borradores rechazados. Ajusta el contenido y registra una nueva decisión para continuar.')
+    elif revision.estado == 'aprobado':
+        st.success('Revisión aprobada. Puedes continuar al almacenamiento desde el menú. Editar el contenido requerirá otra aprobación.')
+    else:
+        st.info('Pendiente de revisión: comprueba ambos formatos y sus fuentes antes de aprobar.')
     st.caption('Cambiar un texto aprobado exige una nueva revisión. Guardar un borrador no lo aprueba.')
+    st.caption('Aprobar no publica en LinkedIn ni sube archivos a OCI. El nombre del revisor es obligatorio; para rechazar, agrega un motivo.')
     reviewer = st.text_input('Nombre del revisor')
     comments = st.text_area('Comentarios de revisión', height=80)
     buttons = st.columns(3)
@@ -270,6 +288,8 @@ def almacenamiento():
             activos=st.session_state.activos, revision=revision,
             almacenamiento_oci={'ruta_objeto': f'activos/{st.session_state.run_id}/revision-{revision.numero_revision:03d}.json'})
     package = st.session_state.paquete
+    if not st.session_state.evidencia:
+        st.info('Paquete aprobado, pendiente de guardar. Guarda y verifica la copia local o descarga el paquete.')
     if st.button('Guardar y verificar copia local', type='primary'):
         try:
             st.session_state.evidencia = guardar_local(package.model_dump(mode='json'), package.almacenamiento_oci.ruta_objeto)
@@ -278,7 +298,8 @@ def almacenamiento():
     if st.session_state.evidencia:
         st.success('Copia local guardada y verificada')
         st.caption('Se recuperó el archivo y su contenido coincide. Esta comprobación no acredita almacenamiento en OCI.')
-        st.code(st.session_state.evidencia, language=None)
+        st.code(st.session_state.evidencia, language=None, wrap_lines=True)
+        st.caption('Puedes descargar el paquete aprobado o volver a edición. Una modificación requerirá una nueva revisión y otro guardado.')
     st.download_button('Descargar paquete aprobado', package.model_dump_json(indent=2),
                        file_name=f'revision-{revision.numero_revision:03d}.json', mime='application/json')
     with st.expander('Detalles técnicos del paquete'):
@@ -303,7 +324,9 @@ def main():
         st.divider()
         st.caption('Modo demostración\n\nAnálisis y generación simulados. Almacenamiento local.')
         st.caption('El progreso se conserva durante esta sesión.')
-    st.markdown('<div class="mode">Demostración · análisis simulado</div>', unsafe_allow_html=True)
+    st.markdown('<div class="mode">Demostración · análisis y generación simulados · almacenamiento local · OCI no conectado</div>', unsafe_allow_html=True)
+    # Es un indicador de navegación, no un porcentaje de ejecución del backend.
+    st.caption(f'Paso {st.session_state.step + 1} de {len(STEPS)} · {STEPS[st.session_state.step]}')
     [carga, resultados, edicion, almacenamiento][st.session_state.step]()
 
 
