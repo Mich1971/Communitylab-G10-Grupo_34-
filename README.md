@@ -302,6 +302,10 @@ tests\test_primera_prueba.py ..                                          [100%]
 
 ## 🖥️ Panel de curaduría (`ui/`)
 
+Documentación de entrega de Sergio (14/10/2026):
+[diseño e implementación del panel, ejecución, pruebas y pendientes](docs/panel-sergio.md).
+Incluye el estado de los PR #17/#18 y la coordinación pendiente con SQLite/OCI.
+
 Interfaz Streamlit que cubre el requisito de UI del hackathon y la historia de usuario **[HU-S1-004 — Flujo de revisión humana](https://github.com/No-Country-simulation/Communitylab-G10-Grupo_34-/issues/8)**: cargar interacciones, revisar el análisis, editar/aprobar/rechazar los dos formatos de contenido y comprobar el estado de almacenamiento — en cuatro pasos (**Carga → Resultados → Edición y aprobación → Almacenamiento**), sobre el diseño aprobado por el equipo (verde petróleo `#00676B`, texto `#122039`/`#52627B`).
 
 Diseño aprobado por el equipo (mockup de referencia) frente a la implementación real:
@@ -336,9 +340,9 @@ Más capturas (incluida la pantalla inicial vacía y el estado post-aprobación)
 
 ### Archivos
 
-- `ui/app.py` — navegación y presentación; consume directamente `esquemas.py` y `validador.py`, sin lógica de negocio propia.
+- `ui/app.py` — navegación, presentación y estado de sesión; consume `esquemas.py` y el validador oficial. El PR #17 corrige su import a `data_pipeline.validador`.
 - `ui/mock_pipeline.py` — clasificación y generación de copy **heurísticas**, no IA real. Es un reemplazo temporal de `ai_modules/` mientras ese módulo no exista.
-- `ui/storage_demo.py` — guarda el paquete **solo en disco local** (`data/oci_sim/`, no versionado) y verifica la lectura posterior con comparación de contenido, incluyendo reintento idéntico (idempotente) y rechazo ante colisión. **Nunca marca el paquete como guardado en OCI real**: `almacenamiento_oci.status_almacenamiento` permanece en `"no_iniciado"` hasta que `storage/oci_client.py` exista y se conecte.
+- `ui/storage_demo.py` — guarda el paquete **solo en disco local** (`data/oci_sim/`, no versionado) y verifica la lectura posterior con comparación de contenido, incluyendo reintento idéntico (idempotente) y rechazo ante colisión. **Nunca marca el paquete como guardado en OCI real**: `almacenamiento_oci.status_almacenamiento` permanece en `"no_iniciado"`. El cliente `storage/oci_client.py` ya existe, pero aún no está conectado al panel.
 - `ui/assets/communitylab-logo.png` — logo oficial del proyecto, integrado en la barra lateral.
 - Detalle adicional y notas de verificación en [`ui/README.md`](ui/README.md).
 
