@@ -456,8 +456,11 @@ def test_sincronizar_sube_el_paquete_reconstruido_y_marca_el_exito(db):
     assert L.sincronizar_pendientes_oci(cliente, db_path=db) == (1, 0)
     payload, periodo, run_id, rev, req = cliente.recibidos[0]
     assert (periodo, run_id, rev, req) == ("2026-W42", "run-1", 1, "req-run-1")
-    assert payload["almacenamiento_oci"]["status_almacenamiento"] == "guardado_con_exito"
-    fila = sqlite3.connect(db).execute("SELECT status_almacenamiento, comprobacion_lectura FROM evidencia_almacenamiento_oci").fetchone()
+    # El reintento sube la evidencia en su estado inicial (el cliente de OCI exige que no
+    # llegue precompuesta); el éxito se registra después en la base.
+    assert payload["almacenamiento_oci"]["status_almacenamiento"] == "no_iniciado"
+    assert payload["almacenamiento_oci"]["comprobacion_lectura"] is False
+    fila =sqlite3.connect(db).execute("SELECT status_almacenamiento, comprobacion_lectura FROM evidencia_almacenamiento_oci").fetchone()
     assert fila == ("guardado_con_exito", 1)
     assert L.sincronizar_pendientes_oci(cliente, db_path=db) == (0, 0)  # ya no queda nada
 
@@ -580,9 +583,10 @@ def test_motivo_corto_va_a_la_dlq_con_el_prefijo_de_negocio(db):
 def test_lote_vacio_se_admite_pero_los_totales_negativos_no(db):
     L.inicializar_db(db)
     con = sqlite3.connect(db)
-    con.execute("INSERT INTO lotes_procesamiento VALUES ('r0','q0','Discord','2026-W42',0,0,0,'2026-10-12')")
+    cols = "(run_id, request_id, origen_comunidad, periodo_referencia, total_recibidos, total_validos, total_rechazados, fecha_procesamiento)"
+    con.execute(f"INSERT INTO lotes_procesamiento {cols} VALUES ('r0','q0','Discord','2026-W42',0,0,0,'2026-10-12')")
     with pytest.raises(sqlite3.IntegrityError):
-        con.execute("INSERT INTO lotes_procesamiento VALUES ('r1','q1','Discord','2026-W42',-1,0,0,'2026-10-12')")
+        con.execute(f"INSERT INTO lotes_procesamiento {cols} VALUES ('r1','q1','Discord','2026-W42',-1,0,0,'2026-10-12')")
     con.close()
 
 
@@ -620,3 +624,94 @@ def test_una_reejecucion_no_borra_las_decisiones_de_curaduria_de_otras_revisione
     L.registrar_analisis_bloque(_analisis("run-k", "req-k", ["m1", "m2"]), validos, db_path=db)
     assert _n(db, "estado_revision", "estado='aprobado' AND revisor='Sergio'") == 1
     assert _n(db, "paquetes_salida") == 1
+
+
+# --- métodos de LocalDatabaseManager que usa orchestration/pipeline_runner.py --------------------
+
+
+def _manager(tmp_path):
+    return L.LocalDatabaseManager(tmp_path / "m.db")
+
+
+def test_registrar_lote_hace_upsert_y_reemplaza_solo_los_rechazos_cuando_se_le_pasan(tmp_path):
+    m = _manager(tmp_path)
+    rech = [{"run_id": "run-1", "request_id": "req-1", "mensaje_id": "x", "error": "vacío"}]
+    m.registrar_lote("run-1", "req-1", "Discord", "2026-W42", 3, 2, 1, rech)
+    m.registrar_lote("run-1", "req-1", "Discord", "2026-W42", 3, 2, 1, rech)  # reintento: no duplica
+    assert _n(m.db_path, "auditoria_rechazados") == 1 and _n(m.db_path, "lotes_procesamiento") == 1
+    m.registrar_lote("run-1", "req-1", "Discord", "2026-W42", 3, 0, 1)  # rechazados=None: no los toca
+    assert _n(m.db_path, "auditoria_rechazados") == 1
+    assert _n(m.db_path, "lotes_procesamiento", "total_validos=0") == 1
+
+
+def test_registrar_lote_y_analisis_persiste_mensajes_y_resumen(tmp_path):
+    m = _manager(tmp_path)
+    validos, _ = validar_lote_crudo(_lote("req-2", ["m1", "m2"]), run_id="run-2")
+    assert m.registrar_lote_y_analisis(_analisis("run-2", "req-2", ["m1", "m2"]), validos, "Discord", "2026-W42", 2, 0) == (2, 0)
+    assert _n(m.db_path, "mensajes_analizados") == 2 and _n(m.db_path, "resumen_comunidad") == 1
+
+
+def test_registrar_paquete_sin_origen_ni_periodo_usa_el_lote_ya_registrado(tmp_path):
+    m = _manager(tmp_path)
+    ids = ["m1", "m2"]
+    validos, _ = validar_lote_crudo(_lote("req-3", ids), run_id="run-3")
+    m.registrar_lote("run-3", "req-3", "Discord", "2026-W42", 2, 2, 0, [])
+    m.registrar_lote_y_analisis(_analisis("run-3", "req-3", ids), validos, "Discord", "2026-W42", 2, 0)
+    assert m.registrar_paquete(_paquete("run-3", "req-3", ids)) == 1
+    # El encabezado del lote conserva los datos reales (el paquete no los pisa con "Desconocido").
+    con = sqlite3.connect(m.db_path)
+    assert con.execute("SELECT origen_comunidad, periodo_referencia FROM lotes_procesamiento").fetchone() == ("Discord", "2026-W42")
+    con.close()
+    assert m.reconstruir_json_paquete_salida("run-3", 1)["run_id"] == "run-3"
+
+
+def test_leer_rechazados_devuelve_solo_los_del_validador_con_las_llaves_del_contrato(tmp_path):
+    m = _manager(tmp_path)
+    rech = [{"run_id": "run-4", "request_id": "req-4", "mensaje_id": "x", "autor": "Ana", "canal": "c",
+             "error": "texto vacío", "texto_crudo": "  "}]
+    m.registrar_lote("run-4", "req-4", "Discord", "2026-W42", 1, 0, 1, rech)
+    filas = m.leer_rechazados("run-4")
+    assert len(filas) == 1
+    assert {"id", "mensaje_id", "error", "error_detalle", "run_id", "request_id", "autor", "canal"} <= set(filas[0])
+    assert filas[0]["error_detalle"] == "texto vacío" and m.leer_rechazados("otro") == []
+
+
+def test_actualizar_estado_flujo_guarda_el_estado_y_devuelve_false_si_el_run_no_existe(tmp_path):
+    m = _manager(tmp_path)
+    m.registrar_lote("run-5", "req-5", "Discord", "2026-W42", 1, 1, 0, [])
+    assert _n(m.db_path, "lotes_procesamiento", "estado_flujo='iniciado'") == 1  # valor por defecto
+    assert m.actualizar_estado_flujo("run-5", "completado") is True
+    assert _n(m.db_path, "lotes_procesamiento", "estado_flujo='completado'") == 1
+    assert m.actualizar_estado_flujo("no-existe", "fallido") is False
+
+
+def test_una_reejecucion_del_lote_no_borra_el_estado_de_flujo_ya_registrado(tmp_path):
+    m = _manager(tmp_path)
+    m.registrar_lote("run-6", "req-6", "Discord", "2026-W42", 1, 1, 0, [])
+    m.actualizar_estado_flujo("run-6", "completado")
+    m.registrar_lote("run-6", "req-6", "Discord", "2026-W42", 1, 1, 0, [])
+    assert _n(m.db_path, "lotes_procesamiento", "estado_flujo='completado'") == 1
+
+
+def test_inicializar_agrega_estado_flujo_a_una_base_v2_que_no_lo_tenia(tmp_path):
+    ruta = tmp_path / "v2sin.db"
+    L.inicializar_db(ruta)
+    con = sqlite3.connect(ruta)
+    con.execute("ALTER TABLE lotes_procesamiento DROP COLUMN estado_flujo")
+    con.execute("INSERT INTO lotes_procesamiento (run_id, request_id, origen_comunidad, periodo_referencia, "
+                "total_recibidos, total_validos, total_rechazados, fecha_procesamiento) "
+                "VALUES ('r','q','Discord','2026-W42',1,1,0,'2026-10-12')")
+    con.commit()
+    con.close()
+    L.inicializar_db(ruta)
+    con = sqlite3.connect(ruta)
+    assert con.execute("SELECT estado_flujo FROM lotes_procesamiento").fetchone() == ("iniciado",)
+    con.close()
+
+
+def test_manager_registrar_telemetria_reemplaza_por_run(db):
+    m = L.LocalDatabaseManager(db)
+    m.registrar_lote("run-t", "req-t", "Discord", "2026-W42", 2, 2, 0)
+    assert m.registrar_telemetria("run-t", "req-t", [_telemetria(), _telemetria(modelo="gpt-y")]) == 2
+    assert m.registrar_telemetria("run-t", "req-t", [_telemetria()]) == 1  # reemplaza, no acumula
+    assert _n(db, "telemetria_llamadas_llm", "run_id='run-t'") == 1

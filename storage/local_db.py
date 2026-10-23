@@ -1143,8 +1143,13 @@ def sincronizar_pendientes_oci(
     for run_id, revision, periodo, request_id in pendientes:
         try:
             payload = reconstruir_json_paquete_salida(run_id, revision, db_path=ruta)
-            payload["almacenamiento_oci"]["status_almacenamiento"] = "guardado_con_exito"
-            payload["almacenamiento_oci"]["comprobacion_lectura"] = True
+            # El orquestador sube el paquete con la evidencia en su estado inicial
+            # ("no_iniciado", sin lectura): el cliente de OCI exige que ese campo no
+            # llegue precompuesto. El reintento debe subir EXACTAMENTE esos bytes; si
+            # no, un objeto que sí llegó a OCI (falló solo la lectura de verificación)
+            # dispara un 412 con hash distinto y queda como colisión permanente.
+            payload["almacenamiento_oci"]["status_almacenamiento"] = "no_iniciado"
+            payload["almacenamiento_oci"]["comprobacion_lectura"] = False
             resultado = storage_client.upload_package(
                 package_payload=payload, periodo_referencia=periodo, run_id=run_id,
                 numero_revision=revision, request_id=request_id,
@@ -1249,6 +1254,11 @@ class LocalDatabaseManager:
         """Persiste el Contrato 3 (`PaqueteSalida`) y su evidencia de OCI."""
         with _transaccion(self.db_path) as cur:
             return _insertar_paquete(cur, paquete, origen_comunidad, periodo_referencia)
+
+    def registrar_telemetria(self, run_id: str, request_id: str, registros: Sequence[Any]) -> int:
+        """Reemplaza la telemetría de LLM del run (una fila por etapa). Idempotente:
+        pasar SIEMPRE la lista completa del run, no solo la etapa nueva."""
+        return registrar_telemetria(run_id, request_id, registros, db_path=self.db_path)
 
     def leer_rechazados(self, run_id: str) -> list[dict[str, Any]]:
         """Recupera los rechazos del validador asociados a `run_id` para que
