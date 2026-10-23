@@ -764,7 +764,7 @@ if __name__ == "__main__":
             sufijo = uuid.uuid4().hex[:8]
             print(f"\n🧪 Ejecutando prueba de subida y lectura activa (Roundtrip) [{sufijo}]...")
             payload_prueba = {
-                "schema_version": "1.1.0",
+                "schema_version": "1.2.0",
                 "tipo_evento": "test_diagnostico_equipo_34",
                 "timestamp": datetime.now(UTC).isoformat(),
                 "mensaje": "Verificación técnica de persistencia inmutable",
