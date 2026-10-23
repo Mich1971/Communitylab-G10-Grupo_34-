@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from ai_modules.cognitive_analyzer import TelemetriaAnalisis
+from ai_modules.generador import TelemetriaGeneracion
 from esquemas import (
     ActivosGenerados,
     AnalisisCognitivo,
@@ -40,6 +41,8 @@ class PipelineState(TypedDict):
     # Telemetría del análisis (modelo, prompt_version, latencia y tokens).
     # Modelo interno de ai_modules/cognitive_analyzer.py, no un contrato.
     telemetria_analisis: Optional[TelemetriaAnalisis]
+    # Telemetría acumulada de la generación (incluye reintentos por invariantes).
+    telemetria_generacion: Optional[TelemetriaGeneracion]
 
     # Enfoque editorial y el conteo que lo sustenta: se calculan dentro de
     # nodo_generar_copys (sección 4, Nodo 3). Son estado interno de
