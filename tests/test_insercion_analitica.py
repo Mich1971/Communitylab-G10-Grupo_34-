@@ -1,11 +1,8 @@
 import sqlite3
-from datetime import datetime, timezone
-import pytest
+from datetime import UTC, datetime
 
 from esquemas import (
     AnalisisCognitivo,
-    BaseModel,
-    IngestionLote,
     InteraccionValidada,
     MensajeAnalizado,
     MetadataOrigenValidado,
@@ -13,6 +10,7 @@ from esquemas import (
     ResumenComunidad,
 )
 from storage.local_db import DDL_ESQUELETO, registrar_analisis_bloque
+
 
 # =============================================================================
 # HELPER: Generador de datos reales de Pydantic para Pruebas Aisladas
@@ -27,7 +25,7 @@ def crear_interaccion_test(id_msg: str, texto: str) -> InteraccionValidada:
         metadata_origen=MetadataOrigenValidado(
             plataforma="Discord",
             identificador_original=f"nativo_{id_msg}",
-            fecha=datetime.now(timezone.utc)
+            fecha=datetime.now(UTC)
         )
     )
 

@@ -1,79 +1,153 @@
 """
-Módulo de Validación e Ingesta de Datos (Data Engineering).
-Aplica validación en dos capas, aislamiento de anomalías con soporte triple de llaves.
+Módulo de Ingesta y Validación (Data Engineering) - CommunityLab MVP.
+Aplica validación determinista de dos capas alineada con esquemas.py.
 """
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
-import uuid
-from pydantic import ValidationError
+
+import hashlib
+from datetime import UTC, datetime
+from typing import Any
+
 import structlog
+from pydantic import ValidationError
 
 from esquemas import IngestionLote, InteraccionValidada, MetadataOrigenValidado
 
 logger = structlog.get_logger("data_pipeline.validador")
 
 
+def _derivar_fecha_respaldo(periodo: str) -> str:
+    """Deriva una fecha base determinista basada en el periodo de referencia."""
+    try:
+        if "-W" in periodo:
+            parts = periodo.split("-W")
+            year = int(parts[0])
+            week = int(parts[1])
+            return (
+                datetime.fromisocalendar(year, week, 1)
+                .replace(tzinfo=UTC)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        if len(periodo) >= 7 and "-" in periodo:
+            year = int(periodo[:4])
+            month = int(periodo[5:7])
+            return (
+                datetime(year, month, 1, tzinfo=UTC)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+    except ValueError as e:
+        # CORRECCIÓN RUFF: Se registra el error en modo debug en lugar de usar un pass ciego
+        logger.debug(
+            "error_parseo_periodo_fecha_respaldo",
+            periodo=periodo,
+            error=str(e),
+        )
+    return "1970-01-01T00:00:00Z"
+
+
 def adaptar_payload_oficial(payload_crudo: dict) -> dict:
-    """Transforma el JSON del jurado al contrato IngestionLote mitigando colisiones."""
+    """Transforma el JSON crudo del jurado al contrato IngestionLote de forma determinista."""
     origen = payload_crudo.get("origen_comunidad", "Desconocido")
-    # CORRECCIÓN: Extrae el primer elemento (ej. 'Discord') en lugar de la lista completa
-    plataforma = origen.split("_")[0] if "_" in origen else origen
-    fecha_ingesta = datetime.now(timezone.utc).isoformat()
-    request_id = payload_crudo.get("request_id") or f"req_{uuid.uuid4().hex[:12]}"
+    plataforma = origen.split("_") if "_" in origen else origen
+
+    periodo = payload_crudo.get("periodo_referencia", "Sin_Periodo")
+    fecha_respaldo = _derivar_fecha_respaldo(periodo)
+
+    if payload_crudo.get("request_id"):
+        request_id = payload_crudo["request_id"]
+    else:
+        contenido_str = str(payload_crudo.get("interacciones", []))
+        hash_req = hashlib.sha256(contenido_str.encode("utf-8")).hexdigest()
+        request_id = f"req_{hash_req[:12]}"
 
     interacciones_adaptadas = []
-    for posicion, item in enumerate(payload_crudo.get("interacciones", []), start=1):
-        id_nativo = item.get("id")
-        id_secuencial = id_nativo or f"{request_id}_msg_{posicion:03d}"
+    fechas_fabricadas_ids = []
 
-        meta_in = item.get("metadata_origen", {})
+    for posicion, item in enumerate(
+        payload_crudo.get("interacciones", []), start=1
+    ):
+        id_raw = item.get("id")
+        id_secuencial = (
+            str(id_raw)
+            if id_raw is not None
+            else f"{request_id}_msg_{posicion:03d}"
+        )
+
+        meta_in = item.get("metadata_origen") or {}
         fecha_original = meta_in.get("fecha")
 
-        if fecha_original is None:
-            logger.warning(
-                "fecha_origen_fabricada",
-                request_id=request_id,
-                mensaje_id=id_secuencial,
-                motivo="metadata_origen.fecha ausente; se usó fecha de ingesta",
-            )
-        fecha_efectiva = fecha_original or fecha_ingesta
+        if not fecha_original:
+            fechas_fabricadas_ids.append(id_secuencial)
+            fecha_efectiva = fecha_respaldo
+        else:
+            fecha_efectiva = str(fecha_original)
 
         sobre_individual = {
             "id": id_secuencial,
-            "autor": item.get("autor", "Anónimo"),
-            "canal": item.get("canal", "sin_canal"),
-            "tipo": item.get("tipo", "sin_clasificar"),
-            "texto": item.get("texto", ""),
+            "autor": (
+                str(item["autor"]) if item.get("autor") is not None else "Anónimo"
+            ),
+            "canal": (
+                str(item["canal"])
+                if item.get("canal") is not None
+                else "sin_canal"
+            ),
+            "tipo": (
+                str(item["tipo"])
+                if item.get("tipo") is not None
+                else "sin_clasificar"
+            ),
+            "texto": (
+                str(item["texto"]) if item.get("texto") is not None else ""
+            ),
             "metadata_origen": {
-                "plataforma": meta_in.get("plataforma", plataforma),
-                "identificador_original": meta_in.get("identificador_original", id_nativo or f"autogenerado_{id_secuencial}"),
+                "plataforma": meta_in.get("plataforma") or plataforma,
+                "identificador_original": (
+                    meta_in.get("identificador_original") or id_secuencial
+                ),
                 "fecha": fecha_efectiva,
             },
         }
         interacciones_adaptadas.append(sobre_individual)
 
+    if fechas_fabricadas_ids:
+        logger.warning(
+            "fechas_origen_fabricadas",
+            request_id=request_id,
+            total=len(fechas_fabricadas_ids),
+            ejemplos=fechas_fabricadas_ids[:3],
+        )
+
     return {
         "schema_version": payload_crudo.get("schema_version", "1.1.0"),
         "request_id": request_id,
         "origen_comunidad": origen,
-        "periodo_referencia": payload_crudo.get("periodo_referencia", "Sin_Periodo"),
+        "periodo_referencia": periodo,
         "interacciones": interacciones_adaptadas,
     }
 
 
 def validar_lote_crudo(
     payload: IngestionLote,
-    run_id: Optional[str] = None,
-) -> Tuple[List[InteraccionValidada], List[Dict[str, Any]]]:
-    """Valida registro por registro aislando descartes con compatibilidad absoluta para el frontend."""
-    validos: List[InteraccionValidada] = []
-    rechazados: List[Dict[str, Any]] = []
+    run_id: str | None = None,
+) -> tuple[list[InteraccionValidada], list[dict[str, Any]]]:
+    """Valida registro por registro controlando y aislando duplicaciones internas del lote."""
+    validos: list[InteraccionValidada] = []
+    rechazados: list[dict[str, Any]] = []
+    ids_procesados = set()
 
     for raw_item in payload.interacciones:
         try:
-            # OPTIMIZACIÓN: Rechaza textos vacíos o con puros espacios para ahorrar tokens
+            if raw_item.id in ids_procesados:
+                raise ValueError(
+                    f"ID duplicado detectado dentro del lote: {raw_item.id}"
+                )
+
             if not raw_item.texto or not raw_item.texto.strip():
-                raise ValueError("El texto de la interacción está vacío o contiene solo espacios.")
+                raise ValueError(
+                    "El texto de la interacción no puede estar vacío ni contener solo espacios"
+                )
 
             meta_validada = MetadataOrigenValidado(
                 plataforma=raw_item.metadata_origen.plataforma,
@@ -86,10 +160,11 @@ def validar_lote_crudo(
                 autor=raw_item.autor,
                 canal=raw_item.canal,
                 tipo=raw_item.tipo,
-                texto=raw_item.texto,
+                texto=raw_item.texto.strip(),
                 metadata_origen=meta_validada,
             )
             validos.append(validated)
+            ids_procesados.add(raw_item.id)
 
         except (ValidationError, ValueError) as err:
             motivo_error = str(err)
@@ -101,7 +176,6 @@ def validar_lote_crudo(
                 error=motivo_error,
             )
 
-            # SOPORTE INTEGRAL: Une aserciones del jurado, ui de Sergio y persistencia SQLite
             rechazados.append({
                 "id": raw_item.id,
                 "mensaje_id": raw_item.id,
@@ -112,7 +186,9 @@ def validar_lote_crudo(
                 "autor": raw_item.autor,
                 "canal": raw_item.canal,
                 "texto_crudo": raw_item.texto,
-                "fecha_aislamiento": datetime.now(timezone.utc).isoformat(),
+                "fecha_aislamiento": (
+                    datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                ),
             })
 
     return validos, rechazados

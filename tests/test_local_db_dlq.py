@@ -1,6 +1,7 @@
-import pytest
 import sqlite3
-from storage.local_db import registrar_rechazados_validador, inicializar_db, DB_PATH
+
+from storage.local_db import DB_PATH, inicializar_db, registrar_rechazados_validador
+
 
 def test_registrar_rechazados_validador_guarda_en_dlq():
     """Verifica que los descartes se guarden en el DLQ respetando las llaves foráneas."""

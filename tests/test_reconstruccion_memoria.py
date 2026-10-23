@@ -1,6 +1,9 @@
-import pytest
 import sqlite3
+
+import pytest
+
 from storage.local_db import DB_PATH, inicializar_db, reconstruir_json_paquete_salida
+
 
 @pytest.fixture(autouse=True)
 def setup_db_prueba():

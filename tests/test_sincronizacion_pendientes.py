@@ -1,6 +1,9 @@
-import pytest
 import sqlite3
+
+import pytest
+
 from storage.local_db import DB_PATH, inicializar_db, sincronizar_pendientes_oci
+
 
 # 1. Clase Mock para simular OCI sin tocar internet (Regla 3 y 4)
 class MockUploadResult:
