@@ -8,26 +8,26 @@ Verifica los criterios de aceptación fijados en la arquitectura:
 3. Conformidad del paquete de salida con el contrato canónico PaqueteSalida.
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
 
 # Asegurar que el directorio raíz esté en sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import json
-from esquemas import (
-    IngestionLote,
-    InteraccionValidada,
-    PaqueteSalida,
-    MetadatosEjecucion,
-    ResumenComunidad,
-    ActivosGenerados,
-    PostLinkedIn,
-    ResumenSemanal,
-    EvidenciaAlmacenamientoOCI,
-)
+
 from data_pipeline.validador import validar_lote_crudo
+from esquemas import (
+    ActivosGenerados,
+    EvidenciaAlmacenamientoOCI,
+    IngestionLote,
+    MetadatosEjecucion,
+    PaqueteSalida,
+    PostLinkedIn,
+    ResumenComunidad,
+    ResumenSemanal,
+)
 
 
 def test_validacion_lote_prueba_01():
