@@ -16,9 +16,14 @@ from pydantic import BaseModel, Field
 
 from ai_modules.multiprovider_agent import CognitiveAgentFactory, resolver_modelo
 from esquemas import (
+    ActivosGenerados,
+    AnalisisCognitivo,
+    CasoNoPublicable,
+    EvidenciaAlmacenamientoOCI,
     InteraccionValidada,
     MensajeAnalizado,
     MetadatosEjecucion,
+    PaqueteSalida,
     PostLinkedIn,
     ResumenSemanal,
 )
@@ -127,6 +132,163 @@ def _texto_minimo(texto: str, minimo: int = 20) -> str:
     while len(resultado) < minimo:
         resultado += " Registro válido."
     return resultado
+
+
+# ---------------------------------------------------------------------------
+# API de compatibilidad con el generador original (Contrato 3)
+# ---------------------------------------------------------------------------
+def buscar_interaccion_por_source_id(source_id: str, interacciones: list[InteraccionValidada]) -> dict[str, Any]:
+    """Busca una interacción por el identificador factual del análisis."""
+    for interaccion in interacciones:
+        if interaccion.id == source_id:
+            return {"encontrado": True, "interaccion": interaccion}
+    return {"encontrado": False, "interaccion": None}
+
+
+def registrar_no_publicable(analisis: MensajeAnalizado) -> CasoNoPublicable:
+    """Construye el caso para curaduría sin generar texto nuevo."""
+    return CasoNoPublicable.desde_mensaje_analizado(analisis)
+
+
+def generar_post_linkedin(
+    interaccion: InteraccionValidada, analisis: MensajeAnalizado
+) -> PostLinkedIn | None:
+    """Genera un post determinista compatible con el contrato original."""
+    if interaccion.id != analisis.source_id:
+        raise ValueError("La interacción y el análisis no corresponden al mismo source_id")
+    if not analisis.apto_para_publicacion:
+        return None
+
+    temas = [str(tema).strip() for tema in analisis.temas if str(tema).strip()]
+    entidades = [str(entidad).strip() for entidad in analisis.entidades_relevantes if str(entidad).strip()]
+    if not temas and not entidades:
+        return None
+    tema_principal = entidades[0] if entidades else temas[0]
+    cuerpo_base = (
+        f"{interaccion.texto.strip()} Contexto documentado: {', '.join(temas or entidades)}. "
+        f"Canal de origen: {interaccion.canal}."
+    )
+    return PostLinkedIn(
+        titulo=_texto_minimo(f"Tema destacado: {tema_principal}", minimo=5)[:200],
+        canal_recomendado="LinkedIn Oficial",
+        cuerpo=_texto_minimo(cuerpo_base),
+        hashtags=[f"#{''.join(c for c in tema.title() if c.isalnum())}" for tema in temas[:5]],
+        source_ids=[analisis.source_id],
+    )
+
+
+def generar_resumen_semanal(
+    interacciones: list[InteraccionValidada], analisis_lista: list[MensajeAnalizado]
+) -> tuple[ResumenSemanal, list[CasoNoPublicable]]:
+    """Genera un resumen determinista; nunca copia texto no publicable."""
+    source_ids: list[str] = []
+    textos_publicables: list[str] = []
+    temas: list[str] = []
+    categorias: list[str] = []
+    sentimientos: list[str] = []
+    casos_no_publicables: list[CasoNoPublicable] = []
+    por_id = {interaccion.id: interaccion for interaccion in interacciones}
+
+    for analisis in analisis_lista:
+        interaccion = por_id.get(analisis.source_id)
+        if interaccion is None:
+            # Un activo sin interacción original no debe recibir source_id.
+            continue
+        source_ids.append(analisis.source_id)
+        for tema in analisis.temas:
+            valor = str(tema).strip()
+            if valor and valor not in temas:
+                temas.append(valor)
+        if analisis.categoria_enrutamiento not in categorias:
+            categorias.append(analisis.categoria_enrutamiento)
+        if analisis.sentimiento not in sentimientos:
+            sentimientos.append(analisis.sentimiento)
+        if analisis.apto_para_publicacion:
+            if interaccion.texto.strip():
+                textos_publicables.append(interaccion.texto.strip())
+        else:
+            casos_no_publicables.append(registrar_no_publicable(analisis))
+
+    if not source_ids:
+        raise ValueError("No hay análisis vinculados a interacciones para generar el resumen semanal.")
+
+    resumen_base = (
+        f"Temas destacados: {', '.join(temas) or 'sin temas detallados'}. "
+        f"Categorías observadas: {', '.join(categorias) or 'sin categorías'}. "
+        f"Sentimientos observados: {', '.join(sentimientos) or 'sin clasificación'}."
+    )
+    if textos_publicables:
+        resumen_base += " Actividad publicable: " + " | ".join(textos_publicables)
+    resumen = ResumenSemanal(
+        seccion="Temas destacados",
+        titular=f"Resumen semanal: {', '.join(temas[:2]) or 'actividad comunitaria'}"[:200],
+        resumen=_texto_minimo(resumen_base),
+        source_ids=list(dict.fromkeys(source_ids)),
+    )
+    return resumen, casos_no_publicables
+
+
+def generar_activos(
+    interacciones: list[InteraccionValidada], analisis_lista: list[MensajeAnalizado]
+) -> ActivosGenerados:
+    """Generador determinista original: produce ambos formatos y casos para curaduría."""
+    resumen_semanal, casos_no_publicables = generar_resumen_semanal(interacciones, analisis_lista)
+    por_id = {interaccion.id: interaccion for interaccion in interacciones}
+    candidatos = [
+        mensaje for mensaje in analisis_lista
+        if mensaje.apto_para_publicacion and mensaje.source_id in por_id
+    ]
+    if not candidatos:
+        raise ValueError("No se encontró ninguna interacción apta para generar PostLinkedIn")
+    mejor = max(candidatos, key=lambda mensaje: mensaje.puntuacion_relevancia.total)
+    post_linkedin = generar_post_linkedin(por_id[mejor.source_id], mejor)
+    if post_linkedin is None:
+        raise ValueError("No se pudo construir un PostLinkedIn válido a partir del análisis")
+
+    resultado = ActivosGenerados(
+        post_linkedin=post_linkedin,
+        resumen_semanal=resumen_semanal,
+        casos_no_publicables=casos_no_publicables,
+    )
+    ids_validos = {mensaje.source_id for mensaje in analisis_lista}
+    ids_activos = (
+        resultado.post_linkedin.source_ids
+        + resultado.resumen_semanal.source_ids
+        + [caso.source_id for caso in resultado.casos_no_publicables]
+    )
+    if not set(ids_activos).issubset(ids_validos):
+        raise ValueError("Hay activos con source_id sin respaldo en el análisis")
+    return resultado
+
+
+def construir_paquete_salida(
+    analisis_cognitivo: AnalisisCognitivo,
+    activos: ActivosGenerados,
+    metadatos_ejecucion: MetadatosEjecucion,
+) -> PaqueteSalida:
+    """Construye el contrato de salida y valida trazabilidad de todos los activos."""
+    source_ids_validos = {mensaje.source_id for mensaje in analisis_cognitivo.mensajes_analizados}
+    source_ids_activos = (
+        activos.post_linkedin.source_ids
+        + activos.resumen_semanal.source_ids
+        + [caso.source_id for caso in activos.casos_no_publicables]
+    )
+    if not set(source_ids_activos).issubset(source_ids_validos):
+        raise ValueError("Hay activos con source_id sin respaldo en el análisis")
+    return PaqueteSalida(
+        run_id=analisis_cognitivo.run_id,
+        request_id=analisis_cognitivo.request_id,
+        metadatos_ejecucion=metadatos_ejecucion,
+        analisis_resumido=analisis_cognitivo.resumen_comunidad,
+        activos=activos,
+        almacenamiento_oci=EvidenciaAlmacenamientoOCI(
+            ruta_objeto=(
+                f"activos/periodo-no-asignado/{analisis_cognitivo.run_id}/revision-1.json"
+            ),
+            status_almacenamiento="no_iniciado",
+            comprobacion_lectura=False,
+        ),
+    )
 
 
 def _activos_degradados(
