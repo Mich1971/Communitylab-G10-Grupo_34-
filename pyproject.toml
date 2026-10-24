@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.140,<0.141",
     "uvicorn[standard]>=0.30",
     "python-dotenv>=1.0,<2.0",
+    "pydantic-settings>=2.5,<3.0",  # api/config.py
 
     # Agente / orquestación
     "pydantic-ai>=2.33,<3.0",
@@ -24,15 +25,31 @@ dependencies = [
 ]
 
 [tool.uv]
-required-version = ">=0.5"
+# exclude-newer con duración relativa ("7 days") requiere un uv reciente; con
+# versiones antiguas falla con un error de configuración poco claro.
+required-version = ">=0.11"
 # Proyecto de aplicación (monorepo plano): uv instala solo las dependencias y
 # no intenta construir/instalar el propio proyecto como paquete.
 package = false
+# Defensa ante ataques a la cadena de suministro: al resolver (`uv lock` /
+# `uv add`), se ignoran versiones publicadas hace menos de 7 días, dando
+# margen a que PyPI detecte y retire releases comprometidos. No afecta a las
+# versiones ya fijadas en uv.lock. Si hace falta un parche urgente de un
+# paquete concreto, exceptuarlo temporalmente (y retirar la excepción luego):
+# exclude-newer-package = { nombre-del-paquete = false }
+exclude-newer = "7 days"
 
 [dependency-groups]
 dev = [
     "pytest>=9.1,<10",
     "ruff>=0.15,<1.0",
+    "httpx>=0.27",  # requerido por fastapi.testclient.TestClient (tests de la API)
+    "scikit-learn>=1.9,<2.0",
+    "scipy>=1.17,<1.18",
+    # Solo desarrollo: kernel para notebooks / celdas interactivas (p. ej. en
+    # VS Code) con el mismo entorno del proyecto. No va en `dependencies`
+    # para que no llegue al despliegue de FastAPI/Streamlit.
+    "ipykernel>=6.29",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -52,4 +69,3 @@ markers = [
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
-

@@ -1,7 +1,7 @@
-"""Agente de An├ílisis Cognitivo (ai_modules/cognitive_analyzer.py) ÔÇö Tarea S1-1 / R2.
+"""Agente de Análisis Cognitivo (ai_modules/cognitive_analyzer.py) — Tarea S1-1 / R2.
 
 Transforma `List[InteraccionValidada]` en el Contrato 2 (`AnalisisCognitivo`).
-Es una funci├│n transformadora sin estado: no importa LangGraph ni
+Es una función transformadora sin estado: no importa LangGraph ni
 `storage/oci_client.py`. La persistencia y el enrutamiento son
 responsabilidad de `orchestration/pipeline_runner.py`.
 """
@@ -46,8 +46,8 @@ MAX_CHARS_TEXTO = 2000
 FRACCION_INICIAL_TRUNCADO = 0.2
 
 # Marcador estable: el resumen y el orquestador identifican registros degradados
-# por este prefijo en vez de depender de texto libre incrustado en la l├│gica.
-PREFIJO_DEGRADACION = "Degradaci├│n por error de servicio tras reintentos"
+# por este prefijo en vez de depender de texto libre incrustado en la lógica.
+PREFIJO_DEGRADACION = "Degradación por error de servicio tras reintentos"
 
 SENTIMIENTOS_OFICIALES = (
     "Altamente Positivo",
@@ -62,9 +62,9 @@ _RE_CREDENCIAL = re.compile(
     r"|bearer\s+[A-Za-z0-9._-]{8,}"
     r"|(?:api[_-]?key|token|secret|password|passwd)\s*[=:]\s*\S+)"
 )
-# CORRECCI├ôN (Riesgo 5): Se elimin├│ el punto '.' de la clase de separadores y se
-# a├▒adieron lookarounds negativos para evitar enmascarar direcciones IPv4
-# (ej. 10.0.10.245), versiones sem├ínticas o timestamps ISO-8601 en logs t├®cnicos.
+# CORRECCIÓN (Riesgo 5): Se eliminó el punto '.' de la clase de separadores y se
+# añadieron lookarounds negativos para evitar enmascarar direcciones IPv4
+# (ej. 10.0.10.245), versiones semánticas o timestamps ISO-8601 en logs técnicos.
 _RE_TELEFONO = re.compile(r"(?<![\w.])\+?\d[\d\s()-]{7,}\d(?![\w.])")
 
 
@@ -85,7 +85,7 @@ def _truncar_texto_semantico(texto: str, max_chars: int = MAX_CHARS_TEXTO) -> st
 
 
 def _leer_entero_env(nombre: str, defecto: int) -> int:
-    """├Ünico punto de lectura de enteros de entorno del m├│dulo; valores inv├ílidos usan el defecto."""
+    """Único punto de lectura de enteros de entorno del módulo; valores inválidos usan el defecto."""
     try:
         valor = int(os.environ.get(nombre, defecto))
     except ValueError:
@@ -107,9 +107,9 @@ def _resolver_proveedor(provider: str | None) -> str:
 
 
 def _fusionar_model_settings(agent: Any, extra_settings: dict[str, Any]) -> dict[str, Any]:
-    """CORRECCI├ôN (Riesgo 1): Preserva los `model_settings` base del agente
-    (como `anthropic_cache_instructions`) al inyectar ajustes por ejecuci├│n
-    (p. ej. `temperature=0.0` en reintentos de validaci├│n).
+    """CORRECCIÓN (Riesgo 1): Preserva los `model_settings` base del agente
+    (como `anthropic_cache_instructions`) al inyectar ajustes por ejecución
+    (p. ej. `temperature=0.0` en reintentos de validación).
     """
     base = getattr(agent, "model_settings", None)
     if isinstance(base, dict):
@@ -118,20 +118,20 @@ def _fusionar_model_settings(agent: Any, extra_settings: dict[str, Any]) -> dict
 
 
 def _crear_mensaje_degradado(source_id: str, error: Exception) -> MensajeAnalizado:
-    """Fallback sem├íntico: puntaje 0, no publicable, `source_id` intacto.
+    """Fallback semántico: puntaje 0, no publicable, `source_id` intacto.
 
     Marca `requiere_soporte=True` y `categoria_enrutamiento="Dificultad"`
-    para que cualquier degradaci├│n (parcial o total) quede localizable por
+    para que cualquier degradación (parcial o total) quede localizable por
     `source_id` en `ResumenComunidad.alertas_soporte`.
 
-    Solo se registra el tipo de excepci├│n: el mensaje original podr├¡a contener
+    Solo se registra el tipo de excepción: el mensaje original podría contener
     credenciales o fragmentos del prompt (M09).
     """
     return MensajeAnalizado(
         source_id=source_id,
         sentimiento="Neutro",
         categoria_enrutamiento="Dificultad",
-        regla_aplicada="Degradaci├│n elegante por indisponibilidad de inferencia",
+        regla_aplicada="Degradación elegante por indisponibilidad de inferencia",
         temas=["Sin_Clasificar"],
         entidades_relevantes=[],
         puntuacion_relevancia=PuntuacionRelevancia(
@@ -153,17 +153,17 @@ class _Uso:
 
 
 class TelemetriaAnalisis(BaseModel):
-    """Telemetr├¡a de una ejecuci├│n de `analizar_lote_cognitivo_con_telemetria`.
+    """Telemetría de una ejecución de `analizar_lote_cognitivo_con_telemetria`.
 
-    No es un contrato can├│nico: es un modelo interno de `ai_modules/`. Lo
+    No es un contrato canónico: es un modelo interno de `ai_modules/`. Lo
     consume el orquestador para componer `MetadatosEjecucion` (Contrato 3)
     sin modificar `esquemas.py`.
 
     Alcance de las cifras:
     - `latencia_ms` es el tiempo de pared del lote completo. Las inferencias
-      corren en paralelo, as├¡ que NO es la suma de las latencias individuales.
-    - `tokens_*` suman solo las respuestas que el proveedor devolvi├│ con
-      ├®xito. Los intentos que terminaron en excepci├│n no informan uso, as├¡
+      corren en paralelo, así que NO es la suma de las latencias individuales.
+    - `tokens_*` suman solo las respuestas que el proveedor devolvió con
+      éxito. Los intentos que terminaron en excepción no informan uso, así
       que en lotes con muchos reintentos el consumo real puede ser mayor.
     """
 
@@ -183,11 +183,11 @@ class TelemetriaAnalisis(BaseModel):
 
     @property
     def caida_total_llm(self) -> bool:
-        """Indica al orquestador si el 100% del lote se degrad├│ por fallo del LLM."""
+        """Indica al orquestador si el 100% del lote se degradó por fallo del LLM."""
         return self.degradados >= self.total_procesados
 
     def a_metadatos_ejecucion(self) -> MetadatosEjecucion:
-        """Conversi├│n directa a los cuatro campos del Contrato 3."""
+        """Conversión directa a los cuatro campos del Contrato 3."""
         return MetadatosEjecucion(
             modelo=self.modelo,
             prompt_version=self.prompt_version,
@@ -225,16 +225,16 @@ async def _ejecutar_inferencia_con_resiliencia(
     ultimo_error: Exception = RuntimeError("sin_intentos")
 
     for intento in range(max_reintentos + 1):
-        # CORRECCI├ôN (Riesgo 1): Si hubo fallo de esquema, forzamos temperature=0.0
-        # fusion├índolo con los model_settings base del agente para no perder el cach├®.
+        # CORRECCIÓN (Riesgo 1): Si hubo fallo de esquema, forzamos temperature=0.0
+        # fusionándolo con los model_settings base del agente para no perder el caché.
         settings = (
             _fusionar_model_settings(agent, {"temperature": 0.0})
             if fallos_validacion
             else None
         )
         try:
-            # CORRECCI├ôN (Riesgo 4): Timeout expl├¡cito por inferencia para evitar
-            # que un socket colgado retenga indefinidamente el sem├íforo en el runner.
+            # CORRECCIÓN (Riesgo 4): Timeout explícito por inferencia para evitar
+            # que un socket colgado retenga indefinidamente el semáforo en el runner.
             resultado = await asyncio.wait_for(
                 agent.run(entrada, model_settings=settings),
                 timeout=timeout_seg,
@@ -242,7 +242,7 @@ async def _ejecutar_inferencia_con_resiliencia(
             mensaje: MensajeAnalizado = resultado.output
             # Invariante de trazabilidad: el LLM no decide el source_id.
             mensaje = mensaje.model_copy(update={"source_id": interaccion.id})
-            # `AgentRunResult.usage` es propiedad en PydanticAI 2.x y m├®todo en 1.x:
+            # `AgentRunResult.usage` es propiedad en PydanticAI 2.x y método en 1.x:
             # `read_usage` acepta ambas (llamar siempre `usage()` degradaba TODO).
             uso_crudo = CognitiveAgentFactory.read_usage(resultado)
             entrada_tok, salida_tok = CognitiveAgentFactory.extract_token_counts(uso_crudo)
@@ -257,7 +257,7 @@ async def _ejecutar_inferencia_con_resiliencia(
             fallos_validacion += 1
             if fallos_validacion > REINTENTOS_VALIDACION:
                 break
-        except Exception as exc:  # noqa: BLE001 ÔÇö incluye TimeoutError y errores de red
+        except Exception as exc:  # noqa: BLE001 — incluye TimeoutError y errores de red
             ultimo_error = exc
             if intento < max_reintentos:
                 await asyncio.sleep(_espera_backoff(intento))
@@ -271,11 +271,11 @@ async def _ejecutar_inferencia_con_resiliencia(
 
 
 def es_mensaje_degradado(m: MensajeAnalizado) -> bool:
-    """Verifica si un `MensajeAnalizado` proviene de una degradaci├│n elegante.
+    """Verifica si un `MensajeAnalizado` proviene de una degradación elegante.
 
-    Se expone como funci├│n p├║blica para que `orchestration/pipeline_runner.py`
+    Se expone como función pública para que `orchestration/pipeline_runner.py`
     pueda inspeccionar si existen mensajes genuinamente analizados antes de
-    invocar al generador de copys, sin depender ├║nicamente de `registros_validos`.
+    invocar al generador de copys, sin depender únicamente de `registros_validos`.
     """
     return m.puntuacion_relevancia.total == 0 and m.motivo_seleccion.startswith(
         PREFIJO_DEGRADACION
@@ -287,11 +287,11 @@ _es_degradado = es_mensaje_degradado
 
 
 def tiene_analisis_utilizable(analisis: AnalisisCognitivo) -> bool:
-    """CORRECCI├ôN (Riesgo 3): Devuelve `True` si al menos un mensaje del lote
+    """CORRECCIÓN (Riesgo 3): Devuelve `True` si al menos un mensaje del lote
     fue analizado exitosamente por el LLM (no degradado).
 
-    Permite que `pipeline_runner.py` detecte ca├¡das totales del proveedor LLM
-    incluso cuando `ResumenComunidad.registros_validos` vale 1 por restricci├│n
+    Permite que `pipeline_runner.py` detecte caídas totales del proveedor LLM
+    incluso cuando `ResumenComunidad.registros_validos` vale 1 por restricción
     del esquema Pydantic (`Field(..., ge=1)`).
     """
     return any(not es_mensaje_degradado(m) for m in analisis.mensajes_analizados)
@@ -300,7 +300,7 @@ def tiene_analisis_utilizable(analisis: AnalisisCognitivo) -> bool:
 def _calcular_resumen_comunidad(
     mensajes: list[MensajeAnalizado], total_recibidos_en_lote: int
 ) -> ResumenComunidad:
-    """Agregaci├│n determinista; el LLM nunca calcula estad├¡sticas del lote."""
+    """Agregación determinista; el LLM nunca calcula estadísticas del lote."""
     degradados = sum(es_mensaje_degradado(m) for m in mensajes)
     conteo: dict[str, int] = dict.fromkeys(SENTIMIENTOS_OFICIALES, 0)
     for m in mensajes:
@@ -321,12 +321,12 @@ def _calcular_resumen_comunidad(
     validos_reales = len(mensajes) - degradados
 
     if validos_reales < 1:
-        # CORRECCI├ôN (Riesgo 3): El contrato en `esquemas.py` exige `registros_validos >= 1`.
-        # Para no violar la invariante aritm├®tica del dashboard (validos + rechazados == total)
-        # cuando ocurre una ca├¡da total del LLM, se ajusta `rechazados_reportados` para que
-        # nunca exceda `total_procesados - 1`, dejando constancia expl├¡cita en `alertas_soporte`.
+        # CORRECCIÓN (Riesgo 3): El contrato en `esquemas.py` exige `registros_validos >= 1`.
+        # Para no violar la invariante aritmética del dashboard (validos + rechazados == total)
+        # cuando ocurre una caída total del LLM, se ajusta `rechazados_reportados` para que
+        # nunca exceda `total_procesados - 1`, dejando constancia explícita en `alertas_soporte`.
         alertas.append(
-            "ALERTA CR├ìTICA: Todos los registros del lote fueron degradados por indisponibilidad del LLM"
+            "ALERTA CRÍTICA: Todos los registros del lote fueron degradados por indisponibilidad del LLM"
         )
         validos_reportados = 1
         rechazados_reportados = max(0, total_procesados - 1)
@@ -356,7 +356,7 @@ async def analizar_lote_cognitivo_con_telemetria(
 ) -> tuple[AnalisisCognitivo, TelemetriaAnalisis]:
     """Analiza un lote de interacciones ya validadas y devuelve `(AnalisisCognitivo, TelemetriaAnalisis)`."""
     if not interacciones:
-        raise ValueError("analizar_lote_cognitivo requiere al menos una interacci├│n validada")
+        raise ValueError("analizar_lote_cognitivo requiere al menos una interacción validada")
 
     proveedor = _resolver_proveedor(provider)
     concurrencia = max_concurrency or _leer_entero_env(

@@ -1,9 +1,10 @@
 """API perimetral de CommunityLab (FastAPI).
 
 Responsabilidad única: guardia de seguridad del sistema. Autentica, valida el
-sobre `IngestionLote`, aplica idempotencia y deposita el lote de forma atómica
-en `data/raw/`. NO ejecuta inferencia ni lanza tareas en memoria: el runner
-local detecta el archivo y orquesta el pipeline.
+sobre `IngestionLote` (con soporte opcional para adaptar el JSON plano del jurado
+cuando no es un sobre incompleto), aplica idempotencia y deposita el lote de
+forma atómica en `data/raw/`. NO ejecuta inferencia ni lanza tareas en memoria:
+el runner local detecta el archivo y orquesta el pipeline.
 
 Endpoints
 ---------
@@ -41,6 +42,7 @@ from api.registro import (
     RegistroIdempotencia,
     ResultadoRegistro,
 )
+from data_pipeline.validador import adaptar_payload_oficial
 from esquemas import IngestionLote
 
 log = structlog.get_logger("api")
@@ -49,11 +51,6 @@ log = structlog.get_logger("api")
 _SEGMENTO_VALIDO = re.compile(r"^[A-Za-z0-9._-]+$")
 _RUN_ID_VALIDO = re.compile(r"^run-\d{8}T\d{6}Z-[0-9a-f]{12}$")
 _MAX_LARGO_ID = 200
-
-
-# --------------------------------------------------------------------------
-# Modelos de respuesta
-# --------------------------------------------------------------------------
 
 
 class AcuseRecibo(BaseModel):
@@ -71,39 +68,25 @@ class EstadoRun(BaseModel):
     actualizado_en: str
 
 
-# --------------------------------------------------------------------------
-# Utilidades puras
-# --------------------------------------------------------------------------
-
-
 def huella_lote(lote: IngestionLote) -> str:
-    """SHA-256 del JSON canónico del lote ya validado.
-
-    Se calcula sobre el modelo y no sobre los bytes crudos: así el orden de
-    claves, los espacios y los campos con valor por defecto (`schema_version`)
-    no distinguen dos envíos que significan lo mismo. El orden de
-    `interacciones` sí cuenta. Los campos desconocidos se ignoran.
-    """
+    """SHA-256 del JSON canónico del lote ya validado."""
     canonico = json.dumps(
-        lote.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        lote.model_dump(mode="json", by_alias=True),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
     )
     return hashlib.sha256(canonico.encode("utf-8")).hexdigest()
 
 
 def escribir_lote_atomico(raw_dir: Path, run_id: str, lote: IngestionLote) -> Path:
-    """Escribe `data/raw/{run_id}.json` sin que el runner vea nunca un archivo a medias.
-
-    Temporal único por escritor (`temp_*`, que el runner debe ignorar) +
-    fsync + `os.replace`. Que sea único permite que dos escritores del mismo
-    run (reintento que retoma) no se pisen el temporal; el destino queda con
-    contenido idéntico en cualquier caso.
-    """
+    """Escribe `data/raw/{run_id}.json` sin que el runner vea nunca un archivo a medias."""
     raw_dir.mkdir(parents=True, exist_ok=True)
     destino = raw_dir / f"{run_id}.json"
     temporal = raw_dir / f"temp_{run_id}_{uuid.uuid4().hex[:8]}.json"
     try:
         with open(temporal, "w", encoding="utf-8") as f:
-            f.write(lote.model_dump_json())
+            f.write(lote.model_dump_json(by_alias=True))
             f.flush()
             os.fsync(f.fileno())
         os.replace(temporal, destino)
@@ -113,7 +96,56 @@ def escribir_lote_atomico(raw_dir: Path, run_id: str, lote: IngestionLote) -> Pa
     return destino
 
 
-def _error(status: int, codigo: str, detalle: str, headers: dict[str, str] | None = None) -> JSONResponse:
+def _es_payload_plano_jurado(datos: Any) -> bool:
+    """Decide si un JSON que NO cumple `IngestionLote` es el formato plano del jurado.
+
+    Se adapta cuando la estructura general es la esperada (`origen_comunidad` y
+    `periodo_referencia` de texto, `interacciones` no vacía de objetos) Y al menos
+    un ítem carece de `id` o de `metadata_origen`: eso es justo lo que el adaptador
+    sabe completar. Se admiten `request_id` y `schema_version` en la raíz.
+
+    Un sobre COMPLETO al que solo le falta `request_id` (todos los ítems con `id` y
+    `metadata_origen`) NO se adapta: es un error del emisor y se rechaza con 422,
+    en vez de inventarle un identificador.
+    """
+    if not isinstance(datos, dict):
+        return False
+    interacciones = datos.get("interacciones")
+    if not isinstance(interacciones, list) or not interacciones:
+        return False
+    if not isinstance(datos.get("origen_comunidad"), str) or not isinstance(
+        datos.get("periodo_referencia"), str
+    ):
+        return False
+    if not all(isinstance(item, dict) for item in interacciones):
+        return False
+    return any("id" not in item or "metadata_origen" not in item for item in interacciones)
+
+
+def _parsear_o_adaptar_lote(cuerpo: bytes) -> tuple[IngestionLote, bool]:
+    """Devuelve `(lote, adaptado)`: valida contra `IngestionLote` o, si es el JSON
+    plano del jurado, lo adapta de forma determinista (mismo payload -> misma huella)."""
+    try:
+        return IngestionLote.model_validate_json(cuerpo), False
+    except ValidationError as exc_original:
+        try:
+            crudo = json.loads(cuerpo)
+        except ValueError:  # JSONDecodeError y UnicodeDecodeError
+            raise exc_original from None
+        if not _es_payload_plano_jurado(crudo):
+            raise exc_original from None
+        try:
+            adaptado = adaptar_payload_oficial(crudo)
+        except Exception:  # noqa: BLE001 - estructura inesperada: se informa el 422 original
+            log.warning("adaptacion_fallida")
+            raise exc_original from None
+        # Si el resultado adaptado sigue siendo inválido, ese ValidationError sube tal cual.
+        return IngestionLote.model_validate(adaptado), True
+
+
+def _error(
+    status: int, codigo: str, detalle: str, headers: dict[str, str] | None = None
+) -> JSONResponse:
     return JSONResponse(
         status_code=status, content={"error": codigo, "detalle": detalle}, headers=headers
     )
@@ -128,7 +160,6 @@ def _problema_de_identificadores(lote: IngestionLote) -> str | None:
     rid = lote.request_id
     if not rid.strip() or len(rid) > _MAX_LARGO_ID or any(ord(c) < 32 for c in rid):
         return f"request_id debe tener entre 1 y {_MAX_LARGO_ID} caracteres sin control"
-    # `periodo_referencia` viaja a la ruta del objeto en OCI (ver oci_client).
     p = lote.periodo_referencia
     if len(p) > _MAX_LARGO_ID or not _SEGMENTO_VALIDO.match(p) or p in {".", ".."}:
         return "periodo_referencia solo admite letras, números, '.', '_' y '-'"
@@ -148,11 +179,6 @@ async def _leer_cuerpo_limitado(request: Request, maximo: int) -> bytes | None:
             return None
         partes.append(trozo)
     return b"".join(partes)
-
-
-# --------------------------------------------------------------------------
-# Aplicación
-# --------------------------------------------------------------------------
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -180,7 +206,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.registro = registro
 
     def autenticado(valor: str | None) -> bool:
-        # Comparación en tiempo constante; encode evita TypeError con no-ASCII.
         return valor is not None and secrets.compare_digest(valor.encode("utf-8"), secreto)
 
     @app.get("/health", include_in_schema=False)
@@ -197,7 +222,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         status_code=202,
         response_model=AcuseRecibo,
         responses={
-            200: {"model": AcuseRecibo, "description": "Duplicado idéntico: devuelve el run_id existente"},
+            200: {
+                "model": AcuseRecibo,
+                "description": "Duplicado idéntico: devuelve el run_id existente",
+            },
             401: {"description": "X-Webhook-Secret ausente o inválido"},
             409: {"description": "request_id conocido con contenido distinto"},
             413: {"description": "Cuerpo demasiado grande"},
@@ -219,13 +247,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             log.warning("auth_fallida", ruta=request.url.path)
             return _error(401, "no_autorizado", "X-Webhook-Secret ausente o inválido")
 
-        # 2) Cuerpo acotado y sobre validado (solo el sobre: la validación
-        #    por mensaje ocurre después, en el pipeline).
+        # 2) Cuerpo acotado y sobre validado (o adaptado si es el JSON plano del jurado).
         cuerpo = await _leer_cuerpo_limitado(request, cfg.max_body_bytes)
         if cuerpo is None:
             return _error(413, "cuerpo_demasiado_grande", f"Máximo {cfg.max_body_bytes} bytes")
         try:
-            lote = IngestionLote.model_validate_json(cuerpo)
+            lote, adaptado = _parsear_o_adaptar_lote(cuerpo)
         except ValidationError as exc:
             return JSONResponse(
                 status_code=422, content={"error": "sobre_invalido", "detalle": _errores_422(exc)}
@@ -255,7 +282,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(
                 status_code=200,
                 content=AcuseRecibo(
-                    request_id=lote.request_id, run_id=res.run_id, estado=res.estado, duplicado=True
+                    request_id=lote.request_id,
+                    run_id=res.run_id,
+                    estado=res.estado,
+                    duplicado=True,
                 ).model_dump(),
             )
         if res.accion == "en_curso":
@@ -289,6 +319,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ingesta_recibida",
             accion=res.accion,
             interacciones=len(lote.interacciones),
+            adaptado=adaptado,
             hash=huella[:12],
         )
         return JSONResponse(
@@ -327,8 +358,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def __getattr__(nombre: str) -> FastAPI:
-    # `uvicorn api.main:app` construye la app al arrancar; importar el módulo
-    # (p. ej. en tests) no exige tener el secreto configurado.
     if nombre == "app":
         global app
         app = create_app()

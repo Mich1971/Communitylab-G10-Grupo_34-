@@ -2,7 +2,7 @@
 
 Re-exporta `SYSTEM_PROMPT` para que `ai_modules.cognitive_analyzer` pueda
 importarlo directamente desde el paquete (`from ai_modules.prompts import
-SYSTEM_PROMPT`), sin acoplarse al subm├│dulo interno donde se ensambla.
+SYSTEM_PROMPT`), sin acoplarse al submódulo interno donde se ensambla.
 """
 
 from .analyzer import PROMPT_VERSION, REANCLAJE_INSTRUCCIONES, SYSTEM_PROMPT, version_de_prompt
