@@ -124,6 +124,7 @@ def adaptar_payload_oficial(payload_crudo: dict) -> dict:
     return {
         "schema_version": payload_crudo.get("schema_version", "1.1.0"),
         "request_id": request_id,
+
         "origen_comunidad": origen,
         "periodo_referencia": periodo,
         "interacciones": interacciones_adaptadas,
@@ -140,7 +141,10 @@ def validar_lote_crudo(
     # Ids ya ACEPTADOS: un duplicado de un registro rechazado no cuenta como duplicado.
     ids_aceptados: set[str] = set()
 
+
+
     for raw_item in payload.interacciones:
+
         try:
             if raw_item.id in ids_aceptados:
                 raise ValueError(
@@ -153,19 +157,29 @@ def validar_lote_crudo(
                 raise ValueError("El texto de la interacción está vacío o contiene solo espacios.")
 
             meta_validada = MetadataOrigenValidado(
+
                 plataforma=raw_item.metadata_origen.plataforma,
+
                 identificador_original=raw_item.metadata_origen.identificador_original,
+
                 fecha=raw_item.metadata_origen.fecha,
+
             )
 
             validated = InteraccionValidada(
+
                 id=raw_item.id,
+
                 autor=raw_item.autor,
+
                 canal=raw_item.canal,
+
                 tipo=raw_item.tipo,
                 texto=raw_item.texto,
                 metadata_origen=meta_validada,
+
             )
+
             validos.append(validated)
             ids_aceptados.add(raw_item.id)
 
@@ -181,6 +195,7 @@ def validar_lote_crudo(
 
             # SOPORTE INTEGRAL: Une aserciones del jurado, ui de Sergio y persistencia SQLite
             rechazados.append({
+
                 "id": raw_item.id,
                 "mensaje_id": raw_item.id,
                 "error": motivo_error,
@@ -188,9 +203,12 @@ def validar_lote_crudo(
                 "run_id": run_id,
                 "request_id": payload.request_id,
                 "autor": raw_item.autor,
+
                 "canal": raw_item.canal,
                 "texto_crudo": raw_item.texto,
                 "fecha_aislamiento": datetime.now(UTC).isoformat(),
             })
+
+
 
     return validos, rechazados
