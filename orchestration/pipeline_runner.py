@@ -407,7 +407,8 @@ class CommunityLabPipeline:
         activos = ActivosGenerados(
             post_linkedin=post, resumen_semanal=resumen, casos_no_publicables=casos
         )
-        metadatos = combinar_metadatos(state["telemetria_analisis"], _sumar_telemetrias(telemetrias))
+        telemetria_gen_total = _sumar_telemetrias(telemetrias)
+        metadatos = combinar_metadatos(state["telemetria_analisis"], telemetria_gen_total)
         bound_log.info("transicion_estado_flujo", estado_anterior=state["estado_flujo"],
                        estado_nuevo="copys_generados", casos_no_publicables=len(casos))
         return {
@@ -416,8 +417,28 @@ class CommunityLabPipeline:
             "activos_generados": activos,
             "casos_no_publicables": casos,
             "metadatos_ejecucion": metadatos,
+            "telemetria_generacion": telemetria_gen_total,
             "estado_flujo": "copys_generados",
         }
+
+    # -- Telemetría ----------------------------------------------------------------
+
+    async def _registrar_telemetria(self, state: PipelineState) -> None:
+        """Persiste una fila por etapa en `telemetria_llamadas_llm` (análisis y, si existe,
+        generación). Best-effort: la telemetría nunca debe abortar ni cambiar el estado del flujo.
+
+        El gestor REEMPLAZA las filas del run, por eso siempre se envía la lista completa."""
+        registros = [
+            t for t in (state.get("telemetria_analisis"), state.get("telemetria_generacion")) if t is not None
+        ]
+        if not registros:
+            return
+        try:
+            await asyncio.to_thread(
+                self.db_manager.registrar_telemetria, state["run_id"], state["request_id"], registros
+            )
+        except Exception as exc:  # noqa: BLE001 — métrica operativa, no dato de negocio
+            self._log(state).warning("telemetria_no_persistida", error=str(exc))
 
     # -- Nodo 4 ------------------------------------------------------------------
 
@@ -519,6 +540,7 @@ class CommunityLabPipeline:
             len(state["interacciones_crudas"]),
             len(state["registros_rechazados"]),
         )
+        await self._registrar_telemetria(state)
 
         # 3-4. OCI con comprobación de lectura; si falla, no se aborta (M07).
         evidencia = await self._subir_a_oci(paquete, periodo, run_id, request_id)
@@ -611,6 +633,7 @@ class CommunityLabPipeline:
             len(state["interacciones_crudas"]),
             len(state["registros_rechazados"]),
         )
+        await self._registrar_telemetria(state)
         self._transicion(state, estado_final, casos_no_publicables=len(casos))
         return {
             "casos_no_publicables": casos,
@@ -641,6 +664,7 @@ class CommunityLabPipeline:
             registros_rechazados=[],
             analisis_cognitivo=None,
             telemetria_analisis=None,
+            telemetria_generacion=None,
             enfoque_editorial=None,
             conteo_enfoque_editorial=None,
             activos_generados=None,
