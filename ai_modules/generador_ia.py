@@ -2,8 +2,9 @@
 
 El flujo oficial del orquestador usa ``generador.generar_activos_marketing``.
 Este módulo mantiene las funciones síncronas anteriores, pero delega las reglas
-comunes al paquete ai_modules y evita duplicados, imports planos y texto privado.
+comunes al paquete ai_modules, sanitiza PII y evita duplicados, imports planos y texto privado.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ from google import genai
 from pydantic import ValidationError
 import structlog
 
+from ai_modules.cognitive_analyzer import _enmascarar_pii
 from ai_modules.generador import (
     _texto_minimo,
     buscar_interaccion_por_source_id,
@@ -28,8 +30,8 @@ from esquemas import (
     ActivosGenerados,
     AnalisisCognitivo,
     InteraccionValidada,
-    MetadatosEjecucion,
     MensajeAnalizado,
+    MetadatosEjecucion,
     PaqueteSalida,
     PostLinkedIn,
     ResumenSemanal,
@@ -108,6 +110,7 @@ def _generar_post_detalle(
     if not analisis.apto_para_publicacion:
         raise ValueError("No se puede generar una publicación con un análisis no publicable")
 
+    texto_seguro = _enmascarar_pii(interaccion.texto)
     prompt = f"""
 Eres redactor de comunicación para una comunidad tecnológica.
 Genera una propuesta para LinkedIn usando exclusivamente los datos dados.
@@ -117,7 +120,7 @@ Genera hashtags relacionados con los temas. No afirmes que fue aprobada o public
 Devuelve exclusivamente el contrato PostLinkedIn en JSON.
 
 source_id autorizado: {analisis.source_id}
-Mensaje publicable original: {interaccion.texto}
+Mensaje publicable original: {texto_seguro}
 Temas identificados: {analisis.temas}
 Entidades relevantes: {analisis.entidades_relevantes}
 """
@@ -157,13 +160,15 @@ def _registros_resumen(interacciones, analisis_lista):
             "temas": analisis.temas,
             "apto_para_publicacion": analisis.apto_para_publicacion,
         }
-        # El texto original solo puede entrar al prompt si el mensaje es publicable.
+        # El texto original solo puede entrar al prompt si el mensaje es publicable (y sanitizado).
         if analisis.apto_para_publicacion:
-            registro["texto"] = interaccion.texto
+            registro["texto"] = _enmascarar_pii(interaccion.texto)
         registros.append(registro)
         source_ids.append(analisis.source_id)
     if not registros:
-        raise ValueError("No hay análisis vinculados a interacciones para generar el resumen semanal.")
+        raise ValueError(
+            "No hay análisis vinculados a interacciones para generar el resumen semanal."
+        )
     return registros, list(dict.fromkeys(source_ids))
 
 
@@ -204,7 +209,8 @@ def _generar_activos_con_metricas(
     ids_interacciones = {interaccion.id for interaccion in interacciones}
     por_id = {interaccion.id: interaccion for interaccion in interacciones}
     candidatos = [
-        mensaje for mensaje in analisis_lista
+        mensaje
+        for mensaje in analisis_lista
         if mensaje.apto_para_publicacion and mensaje.source_id in por_id
     ]
     if not candidatos:
@@ -212,7 +218,9 @@ def _generar_activos_con_metricas(
     mejor = max(candidatos, key=lambda mensaje: mensaje.puntuacion_relevancia.total)
 
     cliente = crear_cliente_gemini()
-    post, entrada_post, salida_post = _generar_post_detalle(cliente, por_id[mejor.source_id], mejor)
+    post, entrada_post, salida_post = _generar_post_detalle(
+        cliente, por_id[mejor.source_id], mejor
+    )
     resumen, entrada_resumen, salida_resumen = _generar_resumen_detalle(
         cliente, interacciones, analisis_lista
     )
@@ -243,8 +251,6 @@ def generar_paquete_con_gemini(
     analisis_cognitivo: AnalisisCognitivo, interacciones: list[InteraccionValidada]
 ) -> PaqueteSalida:
     """Construye el paquete legado con latencia y conteo real de tokens."""
-    import time
-
     inicio = time.perf_counter()
     activos, tokens_entrada, tokens_salida = _generar_activos_con_metricas(
         interacciones, analisis_cognitivo.mensajes_analizados
