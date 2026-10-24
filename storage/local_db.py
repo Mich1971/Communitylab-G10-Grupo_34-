@@ -1053,6 +1053,14 @@ def reconstruir_json_paquete_salida(
         rs_ids = col("SELECT source_id FROM resumen_semanal_source_ids WHERE run_id = ? AND numero_revision = ? ORDER BY id;",
                      run_id, numero_revision)
 
+        # OPTIMIZACIÓN: Cargar todos los temas del run_id y agruparlos en Python por source_id.
+        # Evita una consulta N+1 para cada caso no publicable.
+        temas_por_mensaje: dict[str, list[str]] = {}
+        for row in cur.execute(
+            "SELECT source_id, tema FROM mensaje_temas WHERE run_id = ? ORDER BY id;", (run_id,)
+        ).fetchall():
+            temas_por_mensaje.setdefault(row[0], []).append(row[1])
+
         casos = []
         for sid, sent, cat, sop, mot in cur.execute(
             "SELECT source_id, sentimiento, categoria_enrutamiento, requiere_soporte, motivo_seleccion "
@@ -1061,8 +1069,7 @@ def reconstruir_json_paquete_salida(
         ).fetchall():
             casos.append({
                 "source_id": sid, "sentimiento": sent, "categoria_enrutamiento": cat,
-                "temas": col("SELECT tema FROM mensaje_temas WHERE run_id = ? AND source_id = ? ORDER BY id;",
-                             run_id, sid),
+                "temas": temas_por_mensaje.get(sid, []),
                 "requiere_soporte": bool(sop), "motivo_seleccion": mot,
             })
 
