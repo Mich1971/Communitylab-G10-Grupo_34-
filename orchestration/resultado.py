@@ -8,7 +8,7 @@ circulares (sección 8, punto 1).
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -25,9 +25,9 @@ EstadoFlujoFinal = Literal[
 class RegistroRechazado(BaseModel):
     """Espejo tipado de una fila de `auditoria_rechazados` (validador.py)."""
 
-    mensaje_id: Optional[str] = None
-    autor: Optional[str] = None
-    canal: Optional[str] = None
+    mensaje_id: str | None = None
+    autor: str | None = None
+    canal: str | None = None
     error_detalle: str
 
 
@@ -35,13 +35,13 @@ class ResultadoPipeline(BaseModel):
     estado_flujo: EstadoFlujoFinal
     run_id: str
     request_id: str
-    registros_rechazados: List[RegistroRechazado] = Field(default_factory=list)
-    casos_no_publicables: List[CasoNoPublicable] = Field(default_factory=list)
-    errores: List[str] = Field(default_factory=list)
-    paquete_salida: Optional[PaqueteSalida] = None
+    registros_rechazados: list[RegistroRechazado] = Field(default_factory=list)
+    casos_no_publicables: list[CasoNoPublicable] = Field(default_factory=list)
+    errores: list[str] = Field(default_factory=list)
+    paquete_salida: PaqueteSalida | None = None
 
     @model_validator(mode="after")
-    def paquete_solo_si_completado(self) -> "ResultadoPipeline":
+    def paquete_solo_si_completado(self) -> ResultadoPipeline:
         if (self.estado_flujo == "completado") != (self.paquete_salida is not None):
             raise ValueError(
                 "paquete_salida debe estar presente si y solo si estado_flujo == 'completado'"

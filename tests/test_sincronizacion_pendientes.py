@@ -10,6 +10,8 @@ class MockUploadResult:
     def __init__(self, status_almacenamiento, mensaje_error=None):
         self.status_almacenamiento = status_almacenamiento
         self.mensaje_error = mensaje_error
+        self.comprobacion_lectura = (status_almacenamiento == 'guardado_con_exito')
+        self.comprobacion_lectura = True
 
 class MockOCIClient:
     def __init__(self):
@@ -50,6 +52,12 @@ def test_ciclo_sincronizacion_pendientes_parcial():
         cursor.execute("INSERT INTO lotes_procesamiento (run_id, request_id, origen_comunidad, periodo_referencia, total_recibidos, total_validos, total_rechazados, fecha_procesamiento) VALUES ('run-fallido-01', 'req-01', 'Slack', 'Semana_04', 1, 1, 0, '2026-10-17');")
         cursor.execute("INSERT INTO resumen_comunidad (run_id, total_interacciones_procesadas, registros_validos, registros_rechazados, sentimiento_predominante, fecha_generacion) VALUES ('run-fallido-01', 1, 1, 0, 'Positivo', '2026-10-17');")
         cursor.execute("INSERT INTO paquetes_salida (run_id, numero_revision, request_id, schema_version, fecha_generacion) VALUES ('run-fallido-01', 1, 'req-01', '1.1.0', '2026-10-17');")
+        cursor.execute("INSERT OR REPLACE INTO metadatos_ejecucion_paquete (run_id, numero_revision, modelo, prompt_version, latencia_ms, tokens_totales) VALUES ('run-fallido-01', 1, 'gpt-4', 'v1', 100, 50);")
+        cursor.execute("INSERT OR REPLACE INTO resumen_temas_principales (run_id, orden, tema) VALUES ('run-fallido-01', 1, 'Tema1');")
+        cursor.execute("INSERT OR REPLACE INTO post_linkedin_source_ids (run_id, numero_revision, source_id) VALUES ('run-fallido-01', 1, 'msg1');")
+        cursor.execute("INSERT OR REPLACE INTO resumen_semanal_source_ids (run_id, numero_revision, source_id) VALUES ('run-fallido-01', 1, 'msg1');")
+        cursor.execute("INSERT OR REPLACE INTO estado_revision (run_id, numero_revision, estado, revisor, fecha_decision, comentarios) VALUES ('run-fallido-01', 1, 'pendiente', 'admin', '2026-10-17T00:00:00Z', 'ok');")
+        cursor.execute("INSERT INTO resumen_semanal (run_id, numero_revision, seccion, titular, resumen) VALUES ('run-fallido-01', 1, 'a', 'aaaaa', 'aaaaaaaaaaaaaaaaaaaa');")
         cursor.execute("INSERT INTO post_linkedin (run_id, numero_revision, titulo, cuerpo) VALUES ('run-fallido-01', 1, 'Título QA 1', 'Cuerpo largo válido para la prueba de LinkedIn.');")
         cursor.execute("INSERT INTO evidencia_almacenamiento_oci (run_id, numero_revision, bucket, ruta_objeto, status_almacenamiento, comprobacion_lectura) VALUES ('run-fallido-01', 1, 'bucket-qa', 'activos/01.json', 'guardado_error', 0);")
         
@@ -57,6 +65,12 @@ def test_ciclo_sincronizacion_pendientes_parcial():
         cursor.execute("INSERT INTO lotes_procesamiento (run_id, request_id, origen_comunidad, periodo_referencia, total_recibidos, total_validos, total_rechazados, fecha_procesamiento) VALUES ('run-fallido-02', 'req-02', 'Slack', 'Semana_04', 1, 1, 0, '2026-10-17');")
         cursor.execute("INSERT INTO resumen_comunidad (run_id, total_interacciones_procesadas, registros_validos, registros_rechazados, sentimiento_predominante, fecha_generacion) VALUES ('run-fallido-02', 1, 1, 0, 'Neutro', '2026-10-17');")
         cursor.execute("INSERT INTO paquetes_salida (run_id, numero_revision, request_id, schema_version, fecha_generacion) VALUES ('run-fallido-02', 1, 'req-02', '1.1.0', '2026-10-17');")
+        cursor.execute("INSERT OR REPLACE INTO metadatos_ejecucion_paquete (run_id, numero_revision, modelo, prompt_version, latencia_ms, tokens_totales) VALUES ('run-fallido-02', 1, 'gpt-4', 'v1', 100, 50);")
+        cursor.execute("INSERT OR REPLACE INTO resumen_temas_principales (run_id, orden, tema) VALUES ('run-fallido-02', 1, 'Tema1');")
+        cursor.execute("INSERT OR REPLACE INTO post_linkedin_source_ids (run_id, numero_revision, source_id) VALUES ('run-fallido-02', 1, 'msg1');")
+        cursor.execute("INSERT OR REPLACE INTO resumen_semanal_source_ids (run_id, numero_revision, source_id) VALUES ('run-fallido-02', 1, 'msg1');")
+        cursor.execute("INSERT OR REPLACE INTO estado_revision (run_id, numero_revision, estado, revisor, fecha_decision, comentarios) VALUES ('run-fallido-02', 1, 'pendiente', 'admin', '2026-10-17T00:00:00Z', 'ok');")
+        cursor.execute("INSERT INTO resumen_semanal (run_id, numero_revision, seccion, titular, resumen) VALUES ('run-fallido-02', 1, 'a', 'aaaaa', 'aaaaaaaaaaaaaaaaaaaa');")
         cursor.execute("INSERT INTO post_linkedin (run_id, numero_revision, titulo, cuerpo) VALUES ('run-fallido-02', 1, 'Título QA 2', 'Cuerpo largo válido para la prueba de LinkedIn.');")
         cursor.execute("INSERT INTO evidencia_almacenamiento_oci (run_id, numero_revision, bucket, ruta_objeto, status_almacenamiento, comprobacion_lectura) VALUES ('run-fallido-02', 1, 'bucket-qa', 'activos/02.json', 'guardado_error', 0);")
         

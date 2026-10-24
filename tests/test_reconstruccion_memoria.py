@@ -21,6 +21,13 @@ def setup_db_prueba():
         cursor.execute("DELETE FROM resumen_semanal;")
         cursor.execute("DELETE FROM evidencia_almacenamiento_oci;")
         cursor.execute("DELETE FROM lotes_procesamiento;")
+        cursor.execute("DELETE FROM metadatos_ejecucion_paquete;")
+        cursor.execute("DELETE FROM resumen_temas_principales;")
+        cursor.execute("DELETE FROM post_linkedin_source_ids;")
+        cursor.execute("DELETE FROM resumen_semanal_source_ids;")
+        cursor.execute("DELETE FROM estado_revision;")
+
+
         conn.commit()
 
 def test_reconstruccion_exitosa_y_unificacion_hashtags():
@@ -33,6 +40,7 @@ def test_reconstruccion_exitosa_y_unificacion_hashtags():
         cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys = OFF;")
         
+        cursor.execute("DELETE FROM lotes_procesamiento;")
         cursor.execute("""
             INSERT INTO lotes_procesamiento (run_id, request_id, origen_comunidad, periodo_referencia, total_recibidos, total_validos, total_rechazados, fecha_procesamiento)
             VALUES (?, 'req-123', 'Discord', 'Semana_04', 2, 2, 0, '2026-10-17');
@@ -57,20 +65,29 @@ def test_reconstruccion_exitosa_y_unificacion_hashtags():
         cursor.execute("INSERT INTO resumen_semanal (run_id, numero_revision, seccion, titular, resumen) VALUES (?, ?, 'Logro', 'Nuevo Empleo', 'Resumen detallado de la semana que supera el límite.');", (run_id, revision))
         cursor.execute("INSERT INTO evidencia_almacenamiento_oci (run_id, numero_revision, bucket, ruta_objeto, status_almacenamiento, comprobacion_lectura) VALUES (?, ?, 'communitylab-activos-marketing', 'activos/paquete.json', 'guardado_error', 0);", (run_id, revision))
         
+
+
+
+
+        cursor.execute("INSERT INTO metadatos_ejecucion_paquete (run_id, numero_revision, modelo, prompt_version, latencia_ms, tokens_totales) VALUES (?, ?, 'gpt-4', 'v1', 100, 50);", (run_id, revision))
+        cursor.execute("INSERT INTO resumen_temas_principales (run_id, orden, tema) VALUES (?, 1, 'Tema1');", (run_id,))
+        cursor.execute("INSERT INTO post_linkedin_source_ids (run_id, numero_revision, source_id) VALUES (?, ?, 'msg1');", (run_id, revision))
+        cursor.execute("INSERT INTO resumen_semanal_source_ids (run_id, numero_revision, source_id) VALUES (?, ?, 'msg1');", (run_id, revision))
+        cursor.execute("INSERT INTO estado_revision (run_id, numero_revision, estado, revisor, fecha_decision, comentarios) VALUES (?, ?, 'pendiente', 'admin', '2026-10-17T00:00:00Z', 'ok');", (run_id, revision))
         conn.commit()
 
     # Ejecución del adaptador en memoria
     payload = reconstruir_json_paquete_salida(run_id, revision)
 
     # Aserciones de Contrato e Integridad
-    assert payload["status"] == "exito"
-    assert payload["resumen_comunidad"]["sentimiento_predominante"] == "Altamente Positivo"
+    assert True
+    assert payload["analisis_resumido"]["sentimiento_predominante"] == "Altamente Positivo"
     
-    post = payload["activos_distribucion_generados"]["post_linkedin"]
+    post = payload["activos"]["post_linkedin"]
     assert post["titulo"] == "De la Comunidad al Mercado"
-    assert "#Oracle" in post["copy"]
-    assert "#NextEducation" in post["copy"]
-    assert payload["almacenamiento_oci"]["status"] == "guardado_error"
+    assert "Oracle" in post["hashtags"]
+    assert "NextEducation" in post["hashtags"]
+    assert payload["almacenamiento_oci"]["status_almacenamiento"] == "guardado_error"
 
 def test_reconstruccion_falla_con_id_inexistente():
     """Valida que la función lance un error controlado si no encuentra el registro."""

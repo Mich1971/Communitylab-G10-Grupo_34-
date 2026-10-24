@@ -14,7 +14,6 @@ import hashlib
 import json
 import uuid
 from pathlib import Path
-from typing import List
 
 from esquemas import (
     ActivosGenerados,
@@ -53,8 +52,8 @@ _PUNTAJES_POR_CATEGORIA = {
 }
 
 
-def analizar_mock(validos: List[InteraccionValidada], run_id: str, request_id: str) -> AnalisisCognitivo:
-    mensajes: List[MensajeAnalizado] = []
+def analizar_mock(validos: list[InteraccionValidada], run_id: str, request_id: str) -> AnalisisCognitivo:
+    mensajes: list[MensajeAnalizado] = []
     distribucion: dict[str, int] = {}
 
     for item in validos:

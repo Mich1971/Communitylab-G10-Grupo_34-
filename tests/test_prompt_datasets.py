@@ -5,7 +5,6 @@ from pathlib import Path
 from ai_modules.prompts import CATALOGO_FEW_SHOT, SYSTEM_PROMPT
 from esquemas import InteraccionValidada, MensajeAnalizado
 
-
 DATASET_VALIDACION = Path(__file__).parents[1] / "data" / "samples" / "validation_ground_truth.json"
 
 

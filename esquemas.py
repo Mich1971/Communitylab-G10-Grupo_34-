@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
-from typing import Dict, List, Literal, Optional
-from pydantic import BaseModel, Field, field_validator, model_validator
+from datetime import UTC, datetime
+from typing import Literal
 
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # =====================================================================
 # Contrato 1: Ingesta (n8n / Webhook / carga manual -> API)
@@ -30,7 +30,7 @@ class Interaccion(BaseModel):
     autor: str = Field(default="Anónimo", description="Nombre o alias del miembro comunitario")
     canal: str
     tipo: str = Field(default="sin_clasificar")  # Si falta, asigna valor por defecto
-    texto: Optional[str] = Field(default="", description="Puede venir vacío en pruebas de fallo")
+    texto: str | None = Field(default="", description="Puede venir vacío en pruebas de fallo")
     metadata_origen: MetadataOrigen
 
 
@@ -39,7 +39,7 @@ class IngestionLote(BaseModel):
     request_id: str = Field(..., description="Identificador de la solicitud provisto por el emisor (n8n)")
     origen_comunidad: str
     periodo_referencia: str
-    interacciones: List[Interaccion] = Field(..., min_length=1)
+    interacciones: list[Interaccion] = Field(..., min_length=1)
 
 
 class InteraccionValidada(BaseModel):
@@ -89,8 +89,8 @@ class MensajeAnalizado(BaseModel):
     sentimiento: Sentimiento
     categoria_enrutamiento: CategoriaEnrutamiento
     regla_aplicada: str = Field(..., description="Criterio documentado para derivar el contenido")
-    temas: List[str] = Field(..., min_length=1)
-    entidades_relevantes: List[str] = Field(default_factory=list)
+    temas: list[str] = Field(..., min_length=1)
+    entidades_relevantes: list[str] = Field(default_factory=list)
     puntuacion_relevancia: PuntuacionRelevancia
     motivo_seleccion: str = Field(..., min_length=10, description="Justificación objetiva de la puntuación")
     requiere_soporte: bool = Field(default=False, description="Marca casos que requieren canalización o mentoría")
@@ -102,16 +102,16 @@ class ResumenComunidad(BaseModel):
     registros_validos: int = Field(..., ge=1)
     registros_rechazados: int = Field(default=0, ge=0)
     sentimiento_predominante: str = Field(..., description="Polaridad dominante o 'Mixto'")
-    distribucion_sentimiento: Dict[str, int]
-    temas_principales: List[str] = Field(..., min_length=1)
-    alertas_soporte: List[str] = Field(default_factory=list)
+    distribucion_sentimiento: dict[str, int]
+    temas_principales: list[str] = Field(..., min_length=1)
+    alertas_soporte: list[str] = Field(default_factory=list)
 
 
 class AnalisisCognitivo(BaseModel):
     run_id: str = Field(..., description="ID de ejecución asignado por la API")
     request_id: str = Field(..., description="ID de la solicitud original")
     resumen_comunidad: ResumenComunidad
-    mensajes_analizados: List[MensajeAnalizado] = Field(..., min_length=1)
+    mensajes_analizados: list[MensajeAnalizado] = Field(..., min_length=1)
 
 
 # =====================================================================
@@ -123,15 +123,15 @@ class PostLinkedIn(BaseModel):
     titulo: str = Field(..., min_length=5)
     canal_recomendado: str = Field(default="LinkedIn Oficial")
     cuerpo: str = Field(..., min_length=20)
-    hashtags: List[str] = Field(default_factory=list)
-    source_ids: List[str] = Field(..., min_length=1, description="IDs de mensajes que respaldan la publicación")
+    hashtags: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(..., min_length=1, description="IDs de mensajes que respaldan la publicación")
 
 
 class ResumenSemanal(BaseModel):
     seccion: str
     titular: str = Field(..., min_length=5)
     resumen: str = Field(..., min_length=20)
-    source_ids: List[str] = Field(..., min_length=1, description="IDs de mensajes que respaldan la síntesis")
+    source_ids: list[str] = Field(..., min_length=1, description="IDs de mensajes que respaldan la síntesis")
 
 
 class CasoNoPublicable(BaseModel):
@@ -146,7 +146,7 @@ class CasoNoPublicable(BaseModel):
     source_id: str = Field(..., description="Referencia exacta al id del mensaje")
     sentimiento: Sentimiento
     categoria_enrutamiento: CategoriaEnrutamiento
-    temas: List[str] = Field(..., min_length=1)
+    temas: list[str] = Field(..., min_length=1)
     requiere_soporte: bool = Field(default=False, description="Marca casos que requieren canalización o mentoría")
     motivo_seleccion: str = Field(..., min_length=10, description="Justificación objetiva de la puntuación")
 
@@ -170,7 +170,7 @@ class CasoNoPublicable(BaseModel):
 class ActivosGenerados(BaseModel):
     post_linkedin: PostLinkedIn
     resumen_semanal: ResumenSemanal
-    casos_no_publicables: List[CasoNoPublicable] = Field(
+    casos_no_publicables: list[CasoNoPublicable] = Field(
         default_factory=list,
         description="Mensajes con apto_para_publicacion=False, para revisión del curador (puede estar vacía)",
     )
@@ -186,9 +186,9 @@ class MetadatosEjecucion(BaseModel):
 class EstadoRevision(BaseModel):
     numero_revision: int = Field(default=1, ge=1, description="Secuencia incremental de versión")
     estado: Literal["pendiente", "aprobado", "rechazado"] = "pendiente"
-    revisor: Optional[str] = Field(default=None, description="Alias o identificador del curador humano")
-    fecha_decision: Optional[datetime] = None
-    comentarios: Optional[str] = None
+    revisor: str | None = Field(default=None, description="Alias o identificador del curador humano")
+    fecha_decision: datetime | None = None
+    comentarios: str | None = None
 
 
 class EvidenciaAlmacenamientoOCI(BaseModel):
@@ -201,7 +201,7 @@ class EvidenciaAlmacenamientoOCI(BaseModel):
 
 
 def fecha_utc_ahora() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class PaqueteSalida(BaseModel):

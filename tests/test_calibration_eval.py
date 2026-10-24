@@ -33,7 +33,11 @@ from uuid import uuid4
 
 import pytest
 from scipy.stats import binomtest, spearmanr
-from sklearn.metrics import classification_report, cohen_kappa_score, mean_absolute_error
+from sklearn.metrics import (
+    classification_report,
+    cohen_kappa_score,
+    mean_absolute_error,
+)
 
 # La Condición B no se reconstruye concatenando INSTRUCCIONES_BASE +
 # CATALOGO_FEW_SHOT a mano. El prompt real de pre-producción es

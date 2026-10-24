@@ -2,7 +2,7 @@
 import hashlib
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 
@@ -11,10 +11,16 @@ from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from esquemas import ActivosGenerados, EstadoRevision, IngestionLote, MetadatosEjecucion, PaqueteSalida
 # Consumir la validación oficial de Data Engineering desde su paquete actual.
 # El módulo dejó de estar en la raíz; mantener una copia local duplicaría reglas.
 from data_pipeline.validador import validar_lote_crudo
+from esquemas import (
+    ActivosGenerados,
+    EstadoRevision,
+    IngestionLote,
+    MetadatosEjecucion,
+    PaqueteSalida,
+)
 from ui.mock_pipeline import analizar_mock, generar_copys_mock, generar_run_id
 from ui.storage_demo import guardar_local
 
@@ -258,7 +264,7 @@ def edicion():
             invalidate()
             st.session_state.revision = EstadoRevision(numero_revision=st.session_state.revision.numero_revision,
                 estado='aprobado' if approve else 'rechazado', revisor=reviewer.strip(),
-                comentarios=comments.strip(), fecha_decision=datetime.now(timezone.utc))
+                comentarios=comments.strip(), fecha_decision=datetime.now(UTC))
             if approve:
                 go(3)
             st.rerun()
