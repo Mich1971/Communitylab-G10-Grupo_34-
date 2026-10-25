@@ -1,3 +1,5 @@
+> **Panel HTTP (25/10/2026):** consultar [ui/README.md](ui/README.md) para la ejecución actual. Requiere la API de curaduría; las capturas y descripciones del modo demo anteriores son antecedentes.
+
 # CommunityLab — Equipo 34 (Hackathon ONE G10 / NoCountry)
 > **Motor Inteligente de Transformación y Distribución para Comunidades Digitales**
 

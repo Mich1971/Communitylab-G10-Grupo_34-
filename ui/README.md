@@ -1,41 +1,77 @@
-# CommunityLab: panel de curaduría
+# Panel de curaduría · integración HTTP
 
-**Entrega actualizada del módulo (Sergio, 14/10/2026):** consultar
-[diseño, implementación, ejecución, conexiones, pruebas y pendientes](../docs/panel-sergio.md).
-Ese documento distingue `main`, los PR #17/#18 pendientes y la nueva rama SQLite.
-Las verificaciones fechadas más abajo se conservan como antecedentes históricos.
+El panel conserva las cuatro pantallas y consume la API de curaduría. No abre
+SQLite, no genera contenido y no llama directamente a OCI. Requiere el backend
+de `feat/consultas-curaduria-revisiones` (base probada: `3adc54c`).
 
-Diseño aprobado: variante clara con acento verde petróleo, navegación en cuatro pasos y mensajes originales junto al análisis. Referencia visual: [`docs/screenshots/00-mockup-aprobado.png`](../docs/screenshots/00-mockup-aprobado.png). Logo oficial integrado en la barra lateral desde `ui/assets/communitylab-logo.png`.
+## Ejecución
 
-Capturas de las 4 pantallas (carga, resultados, edición/aprobación con el camino de rechazo, almacenamiento) en [`docs/screenshots/`](../docs/screenshots/) y en el [README principal](../README.md) (sección "Panel de curaduría").
-
-## Ejecutar
-
-Desde la raíz del repositorio, con las dependencias instaladas:
+Desde la raíz, con Python 3.11 y uv:
 
 ```powershell
-python -m streamlit run ui/app.py
-python -m pytest tests/ -q
+uv sync --frozen
 ```
 
-La sesión conserva el progreso al navegar y al recargar el mismo lote mediante su huella de contenido. Un lote diferente reemplaza el trabajo de la sesión; descargarlo previamente. El estado no persiste al cerrar la sesión.
+Configurar en `.env` (sin versionarlo):
 
-## Archivos
+```dotenv
+COMMUNITYLAB_API_URL=http://127.0.0.1:8000
+COMMUNITYLAB_WEBHOOK_SECRET=<mismo secreto del backend, al menos 16 caracteres>
+COMMUNITYLAB_DATA_DIR=data
+```
 
-- `app.py`: presentación y navegación Streamlit; consume los contratos y el validador existentes.
-- `styles.css`: colores, espaciado y estilos de presentación separados del flujo.
-- `mock_pipeline.py`: análisis y generación heurísticos preexistentes; no es IA real.
-- `storage_demo.py`: escritura exclusivamente local con lectura posterior, reintentos idénticos y rechazo de colisiones. No se conecta automáticamente a OCI.
-- `tests/test_frontend.py`: flujo de curaduría, conteos, aprobación, nueva revisión tras edición, conservación del mismo lote e inmutabilidad local.
+Iniciar cada proceso en una terminal desde la raíz:
 
-## Integración pendiente
+```powershell
+uv run --frozen uvicorn api.main:app --host 127.0.0.1 --port 8000
+uv run --frozen python -m orchestration.worker
+uv run --frozen streamlit run ui/app.py --server.address 127.0.0.1
+```
 
-Conectar análisis/generación reales y un adaptador OCI explícito. El paquete mantiene `almacenamiento_oci.status_almacenamiento = no_iniciado` aunque la copia local esté verificada: la evidencia local no demuestra almacenamiento en la nube. La UI señala esta diferencia y no solicita credenciales.
+El worker requiere la configuración de IA y OCI descrita por backend. El panel
+solo requiere URL y secreto. No utiliza datos simulados como sustituto cuando
+la API falla. El ejemplo de Carga se envía al procesamiento real: puede consumir
+el proveedor configurado, igual que cualquier lote subido.
 
-La descarga de borradores incluye los textos actuales aunque todavía no se hayan guardado en sesión. Aprobar exige validación de ambos formatos y nombre del revisor; rechazar exige además un motivo. Editar contenido aprobado elimina su aprobación y aumenta la revisión.
+## Pantallas
 
-## Verificación
+1. **Carga:** enviar JSON, reutilizar una ejecución duplicada y abrir histórico
+   paginado. Los identificadores vienen de la API.
+2. **Resultados:** métricas, seguimiento acotado a dos minutos, resumen,
+   mensajes paginados por categoría, fuentes y rechazos de ambos orígenes.
+3. **Edición y aprobación:** cargar una revisión, editar ambos activos,
+   consultar fuentes y guardar una revisión pendiente, aprobada o rechazada.
+   Las fuentes, hashtags y demás campos no editables se conservan. El backend
+   asigna el número de revisión. El rechazo exige motivo en la interfaz.
+4. **Almacenamiento:** consultar cualquier revisión, descargarla y solicitar
+   guardado/reintento en OCI. Solo se muestra éxito si el backend confirma estado
+   exitoso y lectura verificada. No implica publicación en LinkedIn.
 
-**30 de septiembre de 2026:** las 4 pruebas pasan con el `.venv` del proyecto (Python 3.11.16, `uv venv --python 3.11`) usando las versiones exactas fijadas en `requirements.txt` (Streamlit 1.38.0, Pydantic 2.8.2). Recorrido manual de las 4 pantallas en navegador con el lote de ejemplo: carga (4/3/1), análisis, edición con validación de campos obligatorios, aprobación, guardado local verificado. Se comparó la pantalla de Resultados contra el mockup aprobado (`docs/screenshots/00-mockup-aprobado.png`): coincide en layout, badges y estadísticas; solo difiere el texto de justificación porque proviene de `mock_pipeline.py` (heurística local), no de un LLM real. Probado también en ancho móvil (375px): las columnas se apilan correctamente.
+## Recuperación y límites
 
-*Nota histórica (29 de septiembre de 2026):* una verificación anterior reportó el `.venv` como roto y usó Python 3.12.3 de Anaconda en su lugar. Eso era incorrecto o quedó desactualizado — el `.venv` del proyecto funciona correctamente y es el que debe usarse.
+- `run_id` en la URL permite recuperar la selección al recargar la página.
+- Ediciones no guardadas sobreviven la navegación interna, no el cierre de la
+  sesión. Descargar el borrador antes de cambiar de lote o cargar otra revisión.
+- Ante 409 se conserva el texto y la revisión base, se ofrece comparación con
+  la vigente y se bloquea una nueva escritura hasta cargar explícitamente una
+  revisión. Descargar/copiar la edición antes de hacerlo.
+- Un timeout de escritura puede ocurrir después del guardado. No se reintenta
+  automáticamente: consultar las revisiones y reconciliar antes de repetir.
+- El secreto autentica al servidor ante la API; no autentica al visitante del
+  panel. Restringir el acceso al despliegue y usar datos sintéticos en demos.
+- No se muestran detalles técnicos arbitrarios del backend en mensajes de red.
+- HTTPX pasa de dependencia de desarrollo a ejecución; el lockfile conserva
+  las versiones, sin incorporar otro cliente HTTP.
+
+## Pruebas
+
+```powershell
+uv run --frozen pytest -q
+uv run --frozen pytest tests/test_ui_api_client.py tests/test_ui_http_flow.py tests/test_frontend.py -q
+```
+
+Las pruebas de UI utilizan FastAPI y SQLite temporales. Las fuentes y borradores
+son fixtures sintéticos; OCI se sustituye para probar errores sin nube. Consultar
+[la evidencia de integración](../docs/evidencias/2026-10-25-integracion-http.md).
+La [documentación anterior](../docs/panel-sergio.md) describe la demo histórica,
+no el comportamiento HTTP actual.

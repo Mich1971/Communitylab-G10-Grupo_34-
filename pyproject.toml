@@ -16,6 +16,7 @@ dependencies = [
 
     # Interfaz de curaduría
     "streamlit>=1.63,<1.64",
+    "httpx>=0.27",  # cliente HTTP del panel; también usado por TestClient
 
     # Oracle Cloud Infrastructure (Object Storage)
     "oci>=2.185,<3.0",
@@ -43,7 +44,6 @@ exclude-newer = "7 days"
 dev = [
     "pytest>=9.1,<10",
     "ruff>=0.15,<1.0",
-    "httpx>=0.27",  # requerido por fastapi.testclient.TestClient (tests de la API)
     "scikit-learn>=1.9,<2.0",
     "scipy>=1.17,<1.18",
     # Solo desarrollo: kernel para notebooks / celdas interactivas (p. ej. en
