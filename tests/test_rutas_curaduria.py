@@ -271,3 +271,17 @@ def test_http_guardar_revision_en_oci(cliente):
     no_existe = tc.post(f"/api/v1/runs/{RUN}/revisiones/99/oci", headers=H)
     assert no_existe.status_code == 404
     assert no_existe.json()["error"] == "revision_no_encontrada"
+
+
+# ---------------------------------------------------------------------------
+# Arranque limpio: la API crea el esquema local, sin depender de que corra el worker
+# ---------------------------------------------------------------------------
+def test_arranque_limpio_consultas_responden_sin_worker(tmp_path: Path):
+    cfg = Settings(webhook_secret=SECRETO, data_dir=tmp_path / "data", _env_file=None)
+    with TestClient(create_app(cfg)) as tc:
+        r = tc.get("/api/v1/runs", headers=H)
+        assert r.status_code == 200
+        assert r.json()["items"] == [] and r.json()["total"] == 0
+        r = tc.get("/api/v1/runs/run-inexistente/detalle", headers=H)
+        assert r.status_code == 404
+        assert r.json()["error"] == "ejecucion_no_encontrada"
