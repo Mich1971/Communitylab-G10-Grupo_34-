@@ -101,6 +101,27 @@ class LecturaFallida(ErrorCuraduria):
     codigo, http_status = "lectura_fallida", 503
 
 
+class EscrituraFallida(ErrorCuraduria):
+    codigo, http_status = "escritura_fallida", 503
+
+
+class RevisionInvalida(ErrorCuraduria):
+    codigo, http_status = "revision_invalida", 422
+
+
+class ConflictoRevision(ErrorCuraduria):
+    """La revisión base ya no es la última: otra sesión guardó antes."""
+
+    codigo, http_status = "conflicto_revision", 409
+
+    def __init__(self, revision_base: int, revision_actual: int) -> None:
+        super().__init__(
+            f"La revisión base enviada ({revision_base}) no coincide con la última revisión "
+            f"registrada ({revision_actual}). Recargue antes de guardar."
+        )
+        self.revision_actual = revision_actual
+
+
 # ---------------------------------------------------------------------------
 # Infraestructura
 # ---------------------------------------------------------------------------

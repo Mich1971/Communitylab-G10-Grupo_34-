@@ -38,15 +38,26 @@ def invariante_casos(analisis: AnalisisCognitivo, casos: list[CasoNoPublicable])
 def violaciones_trazabilidad(
     analisis: AnalisisCognitivo, post: PostLinkedIn, resumen: ResumenSemanal
 ) -> list[str]:
-    """Invariantes 1 y 2 de la sección 6.3 (las del LLM). Lista vacía si se cumplen.
+    """Invariantes 1 y 2 de la sección 6.3 (las del LLM). Lista vacía si se cumplen."""
+    procesados = {m.source_id for m in analisis.mensajes_analizados}
+    aptos = {m.source_id for m in analisis.mensajes_analizados if m.apto_para_publicacion}
+    return violaciones_trazabilidad_por_ids(procesados, aptos, post, resumen)
+
+
+def violaciones_trazabilidad_por_ids(
+    procesados: set[str], aptos: set[str], post: PostLinkedIn, resumen: ResumenSemanal
+) -> list[str]:
+    """Mismas invariantes sobre conjuntos de `source_id` ya conocidos.
 
     * `PostLinkedIn` solo puede citar mensajes aptos (A).
     * `ResumenSemanal` puede citar cualquier mensaje procesado (M).
     * Ningún identificador puede ser vacío ni inexistente.
+
+    La edición humana de la curaduría se valida con esta variante: la base solo
+    guarda mensajes procesados, no el `AnalisisCognitivo` original del LLM.
     """
-    procesados = {m.source_id for m in analisis.mensajes_analizados}
-    aptos = {m.source_id for m in analisis.mensajes_analizados if m.apto_para_publicacion}
     problemas: list[str] = []
+
 
     for nombre, activo, permitidos in (
         ("post_linkedin", post, aptos),

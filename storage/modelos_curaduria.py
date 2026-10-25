@@ -20,8 +20,10 @@ from esquemas import (
     CategoriaEnrutamiento,
     EvidenciaAlmacenamientoOCI,
     PaqueteSalida,
+    PostLinkedIn,
     PuntuacionRelevancia,
     ResumenComunidad,
+    ResumenSemanal,
     Sentimiento,
 )
 
@@ -166,3 +168,38 @@ class RespuestaObtenerRevision(BaseModel):
     numero_revision: int
     paquete: PaqueteSalida
     evidencia_oci: EvidenciaAlmacenamientoOCI
+
+
+# 9. registrar_revision
+class EdicionRevisionInput(BaseModel):
+    """Decisión del curador; los activos omitidos se copian de la revisión base."""
+
+    estado: Literal["pendiente", "aprobado", "rechazado"]
+    revisor: str | None = None
+    comentarios: str | None = None
+    post_linkedin: PostLinkedIn | None = None
+    resumen_semanal: ResumenSemanal | None = None
+
+
+class SolicitudRegistrarRevision(BaseModel):
+    revision_base: int = Field(..., ge=1, description="Última revisión que el curador tiene en pantalla")
+    edicion: EdicionRevisionInput
+
+
+class RespuestaRegistrarRevision(BaseModel):
+    run_id: str
+    numero_revision: int
+    estado: Literal["pendiente", "aprobado", "rechazado"]
+    ruta_objeto: str
+
+
+# 10. guardar_revision_en_oci
+class RespuestaGuardarOCI(BaseModel):
+    run_id: str
+    numero_revision: int
+    bucket: str
+    ruta_objeto: str
+    status_almacenamiento: Literal["guardado_con_exito", "guardado_error"]
+    comprobacion_lectura: bool
+    mensaje_error: str | None = None
+    reintento_idempotente: bool = False
