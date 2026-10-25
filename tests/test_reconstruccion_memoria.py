@@ -1,8 +1,29 @@
 import sqlite3
+from datetime import UTC, datetime
 
 import pytest
 
-from storage.local_db import DB_PATH, inicializar_db, reconstruir_json_paquete_salida
+from esquemas import (
+    ActivosGenerados,
+    AnalisisCognitivo,
+    EstadoRevision,
+    EvidenciaAlmacenamientoOCI,
+    InteraccionValidada,
+    MensajeAnalizado,
+    MetadataOrigenValidado,
+    MetadatosEjecucion,
+    PaqueteSalida,
+    PostLinkedIn,
+    PuntuacionRelevancia,
+    ResumenComunidad,
+    ResumenSemanal,
+)
+from storage.local_db import (
+    DB_PATH,
+    inicializar_db,
+    persistir_resultado,
+    reconstruir_json_paquete_salida,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -15,7 +36,9 @@ def setup_db_prueba():
         cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys = OFF;")
         cursor.execute("DELETE FROM paquetes_salida;")
+        cursor.execute("DELETE FROM metadatos_ejecucion_paquete;")
         cursor.execute("DELETE FROM resumen_comunidad;")
+        cursor.execute("DELETE FROM mensajes_analizados;")
         cursor.execute("DELETE FROM post_linkedin;")
         cursor.execute("DELETE FROM post_linkedin_hashtags;")
         cursor.execute("DELETE FROM resumen_semanal;")
@@ -23,54 +46,119 @@ def setup_db_prueba():
         cursor.execute("DELETE FROM lotes_procesamiento;")
         conn.commit()
 
+
 def test_reconstruccion_exitosa_y_unificacion_hashtags():
     """Certifica que el JOIN relacional arma el JSON exacto exigido por el MVP."""
     run_id = "run-QA-2026"
     revision = 1
-    
-    # SOLUCIÓN: Context manager 'with' blinda la base contra bloqueos accidentales
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA foreign_keys = OFF;")
-        
-        cursor.execute("""
-            INSERT INTO lotes_procesamiento (run_id, request_id, origen_comunidad, periodo_referencia, total_recibidos, total_validos, total_rechazados, fecha_procesamiento)
-            VALUES (?, 'req-123', 'Discord', 'Semana_04', 2, 2, 0, '2026-10-17');
-        """, (run_id,))
-        
-        cursor.execute("""
-            INSERT INTO resumen_comunidad (run_id, total_interacciones_procesadas, registros_validos, registros_rechazados, sentimiento_predominante, fecha_generacion)
-            VALUES (?, 2, 2, 0, 'Altamente Positivo', '2026-10-17');
-        """, (run_id,))
-        
-        cursor.execute("INSERT INTO paquetes_salida (run_id, numero_revision, request_id, schema_version, fecha_generacion) VALUES (?, ?, 'req-123', '1.1.0', '2026-10-17');", (run_id, revision))
-        
-        cuerpo_valido_ia = "Este es un copy profesional extendido redactado por el agente de Inteligencia Artificial."
-        cursor.execute("INSERT INTO post_linkedin (run_id, numero_revision, titulo, canal_recomendado, cuerpo) VALUES (?, ?, 'De la Comunidad al Mercado', 'LinkedIn Oficial', ?);", (run_id, revision, cuerpo_valido_ia))
-        
-        # SOLUCIÓN: Mapeo exacto de los 4 bindings para los 4 marcadores '?'
-        cursor.execute("""
-            INSERT INTO post_linkedin_hashtags (run_id, numero_revision, hashtag) 
-            VALUES (?, ?, 'Oracle'), (?, ?, 'NextEducation');
-        """, (run_id, revision, run_id, revision))
-        
-        cursor.execute("INSERT INTO resumen_semanal (run_id, numero_revision, seccion, titular, resumen) VALUES (?, ?, 'Logro', 'Nuevo Empleo', 'Resumen detallado de la semana que supera el límite.');", (run_id, revision))
-        cursor.execute("INSERT INTO evidencia_almacenamiento_oci (run_id, numero_revision, bucket, ruta_objeto, status_almacenamiento, comprobacion_lectura) VALUES (?, ?, 'communitylab-activos-marketing', 'activos/paquete.json', 'guardado_error', 0);", (run_id, revision))
-        
-        conn.commit()
+
+    resumen = ResumenComunidad(
+        total_interacciones_procesadas=1,
+        registros_validos=1,
+        registros_rechazados=0,
+        sentimiento_predominante="Altamente Positivo",
+        distribucion_sentimiento={"Positivo": 1},
+        temas_principales=["Oracle", "NextEducation"],
+        alertas_soporte=[],
+    )
+
+    paquete = PaqueteSalida(
+        run_id=run_id,
+        request_id="req-123",
+        schema_version="1.1.0",
+        metadatos_ejecucion=MetadatosEjecucion(
+            modelo="gpt-4o-mini",
+            prompt_version="1.0.0",
+            latencia_ms=120,
+            tokens_totales=250,
+        ),
+        analisis_resumido=resumen,
+        activos=ActivosGenerados(
+            post_linkedin=PostLinkedIn(
+                titulo="De la Comunidad al Mercado",
+                canal_recomendado="LinkedIn Oficial",
+                cuerpo="Este es un copy profesional extendido redactado por el agente de Inteligencia Artificial.",
+                hashtags=["#Oracle", "#NextEducation"],
+                source_ids=["msg_001"],
+            ),
+            resumen_semanal=ResumenSemanal(
+                seccion="Logro",
+                titular="Nuevo Empleo",
+                resumen="Resumen detallado de la semana que supera el límite establecido.",
+                source_ids=["msg_001"],
+            ),
+            casos_no_publicables=[],
+        ),
+        revision=EstadoRevision(
+            numero_revision=revision,
+            estado="pendiente",
+        ),
+        almacenamiento_oci=EvidenciaAlmacenamientoOCI(
+            bucket="communitylab-activos-marketing",
+            ruta_objeto="activos/paquete.json",
+            status_almacenamiento="guardado_error",
+            comprobacion_lectura=False,
+        ),
+    )
+
+    analisis = AnalisisCognitivo(
+        run_id=run_id,
+        request_id="req-123",
+        resumen_comunidad=resumen,
+        mensajes_analizados=[
+            MensajeAnalizado(
+                source_id="msg_001",
+                sentimiento="Positivo",
+                categoria_enrutamiento="Logro",
+                regla_aplicada="Regla de prueba",
+                temas=["Oracle"],
+                puntuacion_relevancia=PuntuacionRelevancia(
+                    evidencia_explicita=2, utilidad_comunitaria=2, claridad_contexto=2
+                ),
+                motivo_seleccion="Motivo con más de diez caracteres.",
+                apto_para_publicacion=True,
+            )
+        ],
+    )
+    interacciones = [
+        InteraccionValidada(
+            id="msg_001",
+            autor="Mariana",
+            canal="#general",
+            tipo="testimonio",
+            texto="Texto de prueba",
+            metadata_origen=MetadataOrigenValidado(
+                plataforma="Discord",
+                identificador_original="orig_1",
+                fecha=datetime.now(UTC),
+            ),
+        )
+    ]
+
+    persistir_resultado(
+        run_id=run_id,
+        request_id="req-123",
+        origen_comunidad="Discord",
+        periodo_referencia="Semana_04",
+        total_recibidos=1,
+        total_validos=1,
+        analisis_cognitivo=analisis,
+        interacciones_origen=interacciones,
+        paquete=paquete,
+    )
 
     # Ejecución del adaptador en memoria
     payload = reconstruir_json_paquete_salida(run_id, revision)
 
     # Aserciones de Contrato e Integridad
-    assert payload["status"] == "exito"
-    assert payload["resumen_comunidad"]["sentimiento_predominante"] == "Altamente Positivo"
-    
-    post = payload["activos_distribucion_generados"]["post_linkedin"]
+    assert payload["schema_version"] == "1.1.0"
+    assert payload["analisis_resumido"]["sentimiento_predominante"] == "Altamente Positivo"
+
+    post = payload["activos"]["post_linkedin"]
     assert post["titulo"] == "De la Comunidad al Mercado"
-    assert "#Oracle" in post["copy"]
-    assert "#NextEducation" in post["copy"]
-    assert payload["almacenamiento_oci"]["status"] == "guardado_error"
+    assert post["hashtags"] == ["#Oracle", "#NextEducation"]
+    assert payload["almacenamiento_oci"]["status_almacenamiento"] == "guardado_error"
+
 
 def test_reconstruccion_falla_con_id_inexistente():
     """Valida que la función lance un error controlado si no encuentra el registro."""

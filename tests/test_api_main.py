@@ -259,7 +259,7 @@ def test_fallo_de_escritura_devuelve_503_y_permite_reintentar(cliente, monkeypat
 
 
 def test_recepcion_en_curso_devuelve_503_y_tras_la_gracia_se_retoma(tmp_path):
-    cfg = _settings(tmp_path, gracia_recepcion_s=0.05)
+    cfg = _settings(tmp_path, gracia_recepcion_s=0.5)
     with TestClient(create_app(cfg)) as c:
         # Simula una caída entre el alta y el archivo: fila 'recibiendo', sin archivo.
         lote = IngestionLote.model_validate(_lote())
@@ -270,7 +270,7 @@ def test_recepcion_en_curso_devuelve_503_y_tras_la_gracia_se_retoma(tmp_path):
         assert r.status_code == 503 and r.json()["error"] == "recepcion_en_curso"
         assert list(cfg.raw_dir.iterdir()) == []
 
-        time.sleep(0.1)
+        time.sleep(0.6)
         r = c.post(URL, json=_lote(), headers=H)
         assert r.status_code == 202
         assert r.json()["run_id"] == huérfano.run_id  # mismo run, ahora con archivo

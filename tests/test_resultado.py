@@ -71,7 +71,8 @@ def test_pipeline_state_declara_los_campos_de_la_spec():
     esperados = {
         "run_id", "request_id", "origen_comunidad", "periodo_referencia", "ruta_archivo_crudo",
         "interacciones_crudas", "interacciones_validas", "registros_rechazados",
-        "analisis_cognitivo", "telemetria_analisis", "enfoque_editorial", "conteo_enfoque_editorial",
+        "analisis_cognitivo", "telemetria_analisis", "telemetria_generacion",
+        "enfoque_editorial", "conteo_enfoque_editorial",
         "activos_generados", "casos_no_publicables", "metadatos_ejecucion",
         "paquete_salida", "almacenamiento_oci", "errores", "estado_flujo",
     }

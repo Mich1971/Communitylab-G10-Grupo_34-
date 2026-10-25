@@ -1,6 +1,6 @@
 import pytest
 from esquemas import IngestionLote
-from validador import adaptar_payload_oficial, validar_lote_crudo
+from data_pipeline.validador import adaptar_payload_oficial, validar_lote_crudo
 
 
 def test_adaptador_y_validacion_payload_oficial():
@@ -41,7 +41,7 @@ def test_adaptador_y_validacion_payload_oficial():
 
     for idx, msg in enumerate(payload_adaptado["interacciones"], start=1):
         assert "id" in msg
-        assert msg["id"] == f"msg_{idx:03d}"
+        assert msg["id"] == f"{payload_adaptado['request_id']}_msg_{idx:03d}"
         assert "metadata_origen" in msg
         assert msg["metadata_origen"]["plataforma"] == "Discord"
         assert msg["metadata_origen"]["identificador_original"] == f"autogenerado_{msg['id']}"
@@ -59,5 +59,5 @@ def test_adaptador_y_validacion_payload_oficial():
     assert validos[1].autor == "Lucas Albuquerque"
 
     assert len(rechazados) == 1
-    assert rechazados[0]["id"] == "msg_003"
-    assert "El texto de la interacción no puede estar vacío" in rechazados[0]["error"]
+    assert rechazados[0]["id"] == f"{payload_adaptado['request_id']}_msg_003"
+    assert "El texto de la interacción está vacío o contiene solo espacios." in rechazados[0]["error"]

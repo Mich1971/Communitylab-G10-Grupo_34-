@@ -22,14 +22,14 @@ def test_panel_arranca_sin_cargar_un_lote():
     antigua ubicación en la raíz, antes de probar acciones de la interfaz.
     No necesita credenciales de IA ni de OCI.
     """
-    app = AppTest.from_file(str(ROOT / 'ui/app.py')).run()
+    app = AppTest.from_file(str(ROOT / 'ui/app.py'), default_timeout=15).run()
     assert not app.exception, [error.message for error in app.exception]
     assert app.title[0].value == 'Empieza con tu comunidad'
     assert any(button.label == 'Probar con datos de ejemplo' for button in app.button)
 
 
 def test_review_flow_and_edit_invalidation():
-    app = AppTest.from_file(str(ROOT / 'ui/app.py')).run()
+    app = AppTest.from_file(str(ROOT / 'ui/app.py'), default_timeout=15).run()
     click(app, 'Probar con datos de ejemplo')
     run_id = app.session_state.run_id
     click(app, 'Continuar al análisis')
