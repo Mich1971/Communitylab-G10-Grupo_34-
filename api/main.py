@@ -50,6 +50,7 @@ from api.rutas_curaduria import (
 )
 from data_pipeline.validador import adaptar_payload_oficial
 from esquemas import IngestionLote
+from storage.local_db import inicializar_db
 
 log = structlog.get_logger("api")
 
@@ -196,6 +197,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         await asyncio.to_thread(registro.inicializar)
+        # Las consultas de curaduría leen tablas del esquema local que antes solo
+        # creaba el worker: sin esto, un arranque limpio responde 503 hasta que
+        # el worker corre por primera vez. Es idempotente y seguro con el worker.
+        await asyncio.to_thread(inicializar_db, cfg.db_path)
         cfg.raw_dir.mkdir(parents=True, exist_ok=True)
         log.info("api_iniciada", raw_dir=str(cfg.raw_dir))
         yield
