@@ -42,6 +42,12 @@ from api.registro import (
     RegistroIdempotencia,
     ResultadoRegistro,
 )
+from api.rutas_curaduria import (
+    registrar_manejadores_error,
+)
+from api.rutas_curaduria import (
+    router as router_curaduria,
+)
 from data_pipeline.validador import adaptar_payload_oficial
 from esquemas import IngestionLote
 
@@ -204,6 +210,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = cfg
     app.state.registro = registro
+    registrar_manejadores_error(app)
+    app.include_router(router_curaduria)
 
     def autenticado(valor: str | None) -> bool:
         return valor is not None and secrets.compare_digest(valor.encode("utf-8"), secreto)
