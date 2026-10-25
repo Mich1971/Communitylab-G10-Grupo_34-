@@ -763,6 +763,7 @@ def _insertar_paquete(
     paquete: Any,
     origen_comunidad: str | None = None,
     periodo_referencia: str | None = None,
+    sobrescribir: bool = True,
 ) -> int:
     run_id, request_id = paquete.run_id, paquete.request_id
     rev = paquete.revision.numero_revision
@@ -782,7 +783,15 @@ def _insertar_paquete(
     _insertar_resumen_comunidad(cur, run_id, res, fecha_gen)
 
     # Reejecución idempotente del mismo (run_id, revisión): el CASCADE limpia hijas.
-    cur.execute("DELETE FROM paquetes_salida WHERE run_id = ? AND numero_revision = ?;", (run_id, rev))
+    # La curaduría pasa `sobrescribir=False`: solo inserta, y una revisión ya existente
+    # falla por clave primaria en lugar de pisar silenciosamente la edición de otra sesión.
+    if sobrescribir:
+        cur.execute("DELETE FROM paquetes_salida WHERE run_id = ? AND numero_revision = ?;", (run_id, rev))
+        cur.execute("DELETE FROM metadatos_ejecucion_paquete WHERE run_id = ? AND numero_revision = ?;", (run_id, rev))
+        cur.execute("DELETE FROM post_linkedin WHERE run_id = ? AND numero_revision = ?;", (run_id, rev))
+        cur.execute("DELETE FROM resumen_semanal WHERE run_id = ? AND numero_revision = ?;", (run_id, rev))
+        cur.execute("DELETE FROM estado_revision WHERE run_id = ? AND numero_revision = ?;", (run_id, rev))
+        cur.execute("DELETE FROM evidencia_almacenamiento_oci WHERE run_id = ? AND numero_revision = ?;", (run_id, rev))
     cur.execute(
         "INSERT INTO paquetes_salida (run_id, numero_revision, request_id, schema_version, fecha_generacion) "
         "VALUES (?, ?, ?, ?, ?);",
@@ -1113,6 +1122,23 @@ def reconstruir_json_paquete_salida(
     return payload
 
 
+def actualizar_evidencia_oci(
+    run_id: str,
+    numero_revision: int,
+    status: str,
+    comprobacion_lectura: bool,
+    db_path: str | Path | None = None,
+) -> bool:
+    """Registra el resultado real de la subida a OCI; devuelve False si la revisión no existe."""
+    with _transaccion(db_path) as cur:
+        cur.execute(
+            "UPDATE evidencia_almacenamiento_oci SET status_almacenamiento = ?, comprobacion_lectura = ? "
+            "WHERE run_id = ? AND numero_revision = ?;",
+            (status, 1 if comprobacion_lectura else 0, run_id, numero_revision),
+        )
+        return cur.rowcount == 1
+
+
 def sincronizar_pendientes_oci(
     storage_client: Any,
     db_path: str | Path | None = None,
@@ -1155,13 +1181,7 @@ def sincronizar_pendientes_oci(
                 numero_revision=revision, request_id=request_id,
             )
             if resultado.status_almacenamiento == "guardado_con_exito" and resultado.comprobacion_lectura:
-                with contextlib.closing(sqlite3.connect(ruta, timeout=DB_TIMEOUT_SEGUNDOS)) as c2:
-                    c2.execute(
-                        "UPDATE evidencia_almacenamiento_oci SET status_almacenamiento = 'guardado_con_exito', "
-                        "comprobacion_lectura = 1 WHERE run_id = ? AND numero_revision = ?;",
-                        (run_id, revision),
-                    )
-                    c2.commit()
+                actualizar_evidencia_oci(run_id, revision, "guardado_con_exito", True, db_path=ruta)
                 exitosos += 1
                 logger.info("reintento_sincronizacion_oci_exitoso", run_id=run_id, revision=revision)
             else:
@@ -1306,3 +1326,10 @@ class LocalDatabaseManager:
 
     def sincronizar_pendientes_oci(self, storage_client: Any) -> tuple[int, int]:
         return sincronizar_pendientes_oci(storage_client, db_path=self.db_path)
+
+    def actualizar_evidencia_oci(
+        self, run_id: str, numero_revision: int, status: str, comprobacion_lectura: bool
+    ) -> bool:
+        return actualizar_evidencia_oci(
+            run_id, numero_revision, status, comprobacion_lectura, db_path=self.db_path
+        )

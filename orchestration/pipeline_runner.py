@@ -35,7 +35,6 @@ from ai_modules.generador import TelemetriaGeneracion, generar_activos_marketing
 from data_pipeline.validador import adaptar_payload_oficial, validar_lote_crudo
 from esquemas import (
     ActivosGenerados,
-    AnalisisCognitivo,
     CasoNoPublicable,
     EstadoRevision,
     EvidenciaAlmacenamientoOCI,
@@ -44,6 +43,12 @@ from esquemas import (
     PaqueteSalida,
     PostLinkedIn,
     ResumenSemanal,
+)
+from orchestration.invariantes import (  # noqa: F401 - reexportadas para compatibilidad
+    PRIORIDAD_EMPATE_ENFOQUE,
+    calcular_enfoque_editorial,
+    invariante_casos,
+    violaciones_trazabilidad,
 )
 from orchestration.resultado import RegistroRechazado, ResultadoPipeline
 from orchestration.state import PipelineState
@@ -54,7 +59,6 @@ logger = structlog.get_logger("orchestration.pipeline_runner")
 
 NUMERO_REVISION_INICIAL = 1
 MAX_REINTENTOS_INVARIANTES = 2  # reintentos del prompt con temperatura cero (sección 4, Nodo 3, paso 6)
-PRIORIDAD_EMPATE_ENFOQUE = ("Logro", "Dificultad", "Duda")  # a ratificar con el equipo editorial
 BUCKET_POR_DEFECTO = "communitylab-activos-marketing"
 DESCONOCIDO = "desconocido"
 
@@ -67,62 +71,6 @@ _NOMBRE_RUN = re.compile(r"^run-\d{8}T\d{6}Z-[0-9a-f]{12}$")
 class InvarianteViolada(RuntimeError):
     """Una invariante de trazabilidad factual (sección 6.3) no se cumple."""
 
-
-# ---------------------------------------------------------------------------
-# Funciones puras (sin I/O): enfoque editorial, invariantes y metadatos
-# ---------------------------------------------------------------------------
-
-
-def calcular_enfoque_editorial(analisis: AnalisisCognitivo) -> tuple[str, dict[str, int]]:
-    """Enfoque editorial (M01): categoría mayoritaria entre los mensajes aptos.
-
-    En empate gana `Logro` > `Dificultad` > `Duda`. Solo orienta el tono; nunca
-    bifurca el formato de salida. Devuelve `(enfoque, conteo)`.
-    """
-    conteo: dict[str, int] = {"Logro": 0, "Duda": 0, "Dificultad": 0}
-    for m in analisis.mensajes_analizados:
-        if m.apto_para_publicacion:
-            conteo[m.categoria_enrutamiento] += 1
-    maximo = max(conteo.values())
-    enfoque = next(c for c in PRIORIDAD_EMPATE_ENFOQUE if conteo[c] == maximo)
-    return enfoque, conteo
-
-
-def invariante_casos(analisis: AnalisisCognitivo, casos: list[CasoNoPublicable]) -> bool:
-    """`casos_no_publicables` debe ser exactamente el conjunto de no aptos, sin repetidos."""
-    no_aptos = {m.source_id for m in analisis.mensajes_analizados if not m.apto_para_publicacion}
-    ids = [c.source_id for c in casos]
-    return len(ids) == len(set(ids)) and set(ids) == no_aptos
-
-
-def violaciones_trazabilidad(
-    analisis: AnalisisCognitivo, post: PostLinkedIn, resumen: ResumenSemanal
-) -> list[str]:
-    """Invariantes 1 y 2 de la sección 6.3 (las del LLM). Lista vacía si se cumplen.
-
-    * `PostLinkedIn` solo puede citar mensajes aptos (A).
-    * `ResumenSemanal` puede citar cualquier mensaje procesado (M).
-    * Ningún identificador puede ser vacío ni inexistente.
-    """
-    procesados = {m.source_id for m in analisis.mensajes_analizados}
-    aptos = {m.source_id for m in analisis.mensajes_analizados if m.apto_para_publicacion}
-    problemas: list[str] = []
-
-    for nombre, activo, permitidos in (
-        ("post_linkedin", post, aptos),
-        ("resumen_semanal", resumen, procesados),
-    ):
-        ids = list(activo.source_ids)
-        if not ids:
-            problemas.append(f"{nombre}.source_ids está vacío")
-        vacios = [s for s in ids if not s or not str(s).strip()]
-        if vacios:
-            problemas.append(f"{nombre}.source_ids contiene identificadores vacíos")
-        fuera = sorted({s for s in ids if s and s not in permitidos})
-        if fuera:
-            regla = "fuera del conjunto de mensajes aptos" if nombre == "post_linkedin" else "inexistentes"
-            problemas.append(f"{nombre}.source_ids {regla}: {fuera}")
-    return problemas
 
 
 def combinar_metadatos(

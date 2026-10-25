@@ -549,8 +549,8 @@ def test_paquete_persistido_es_reconstruible_con_las_funciones_de_local_db(pipel
 
     reconstruido = local_db.reconstruir_json_paquete_salida(RUN_ID, 1)
 
-    assert reconstruido["activos_distribucion_generados"]["post_linkedin"]["titulo"] == "Logros de la semana"
-    assert reconstruido["almacenamiento_oci"]["status"] == "guardado_con_exito"
+    assert reconstruido["activos"]["post_linkedin"]["titulo"] == "Logros de la semana"
+    assert reconstruido["almacenamiento_oci"]["status_almacenamiento"] == "guardado_con_exito"
 
 
 # ---------------------------------------------------------------------------
