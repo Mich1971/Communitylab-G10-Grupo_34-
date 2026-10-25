@@ -128,6 +128,30 @@ def test_oci_200_error_is_not_success(panel, monkeypatch):
     )
 
 
+@pytest.mark.parametrize("idempotent", [True, False])
+def test_oci_success_shows_idempotent_retry_notice(panel, monkeypatch, idempotent):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "storage.revisiones.OCIStorageClient",
+        lambda: SimpleNamespace(
+            upload_package=lambda **kw: SimpleNamespace(
+                status_almacenamiento="guardado_con_exito",
+                comprobacion_lectura=True,
+                mensaje_error=None,
+                bucket="test",
+                reintento_idempotente=idempotent,
+            )
+        ),
+    )
+    app, _ = panel
+    click(app, "Abrir ejecución")
+    click(app, "4  Almacenamiento")
+    click(app, "Guardar o reintentar en OCI")
+    assert app.success
+    assert any("idempotente" in i.value for i in app.info) is idempotent
+
+
 def test_empty_and_failed_runs_remain_inspectable(panel, tmp_path):
     app, _ = panel
     for state in ("sin_contenido_publicable", "sin_registros_validos", "fallido"):

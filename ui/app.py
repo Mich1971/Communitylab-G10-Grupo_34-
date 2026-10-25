@@ -472,6 +472,11 @@ def almacenamiento(api):
     )
     if ok:
         st.success("Guardado en OCI y lectura verificada por el backend.")
+        if st.session_state.get("oci_idempotent_revision") == number:
+            st.info(
+                "Reintento idempotente: el objeto ya existía en OCI con el mismo "
+                "contenido y no se duplicó."
+            )
     elif evidence["status_almacenamiento"] == "guardado_error":
         st.error(
             "El guardado OCI no está verificado. La revisión sigue disponible en el backend."
@@ -487,6 +492,11 @@ def almacenamiento(api):
                 result["status_almacenamiento"] == "guardado_con_exito"
                 and result["comprobacion_lectura"] is True
             ):
+                # El contrato persistido no guarda este indicador: solo viaja en
+                # la respuesta del guardado, así que se recuerda para el rerun.
+                st.session_state.oci_idempotent_revision = (
+                    number if result.get("reintento_idempotente") else None
+                )
                 st.rerun()
             else:
                 st.error(
