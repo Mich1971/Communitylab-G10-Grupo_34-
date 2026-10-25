@@ -118,3 +118,60 @@ proveedor de IA (por defecto `GEMINI_API_KEY`) y las variables `OCI_*` del equip
 como indica `ui/README.md`, subir un lote desde Carga y verificar el estado OCI con
 lectura verificada. Sin esas credenciales, el PR es válido pero este tramo queda
 declarado como no probado.
+
+## Recorrido real con Gemini y OCI (25 de octubre, noche)
+
+Se ejecutaron API, worker y panel con un directorio de datos limpio, la clave de
+Gemini de Sergio y un **bucket de prueba personal** en OCI (`sa-santiago-1`, privado,
+creado solo para esta prueba). **No es el bucket del equipo (`mx-queretaro-1`).**
+Lote: `data/raw/lote_prueba_01.json` con otro `request_id`; el `request_id` fijo del
+botón "Enviar datos de ejemplo" se trata como duplicado tras el primer envío.
+
+### Qué se comprobó de verdad
+
+| Tramo | Resultado |
+|---|---|
+| API → worker → pipeline | Run `completado`: 4 recibidos, 3 válidos, 1 rechazado |
+| Análisis cognitivo | **Real** (Gemini): sentimiento "Mixto", temas y categorías (Logro/Duda) |
+| Guardado en OCI desde el worker | `put_object` + lectura de verificación, `guardado_con_exito`, `comprobacion_lectura=true` |
+| Aprobación en el panel | Revisión 2 `aprobado` por el revisor |
+| Guardado en OCI desde el panel | Revisión 2 → "Guardado en OCI y lectura verificada por el backend" |
+| Verificación independiente | Los objetos `activos/2026-W38/<run>/revision-001.json` y `revision-002.json` existen en el bucket |
+
+Capturas (datos sintéticos, sin claves ni credenciales visibles):
+
+![Carga: run completado](evidencias/e2e-real/01-carga-run-completado.jpg)
+![Resultados con análisis de Gemini](evidencias/e2e-real/02-resultados-analisis-gemini.jpg)
+![Editor con el texto de la plantilla de respaldo](evidencias/e2e-real/03-editor-plantilla-respaldo.jpg)
+![Almacenamiento: aprobado, OCI sin verificar](evidencias/e2e-real/04a-almacenamiento-sin-verificar.jpg)
+![Almacenamiento: verificado en OCI](evidencias/e2e-real/04b-almacenamiento-verificado-oci.jpg)
+
+### Qué NO quedó probado
+
+**La generación de contenido con IA no llegó a funcionar.** El texto del editor
+("Comunidad: OCI …") es la **plantilla de respaldo** (`generacion_ia_degradada_a_plantilla`),
+no salida del modelo. Causa: la clave usada es de capa gratuita y Google responde
+`429 You exceeded your current quota` tras ~6 llamadas por minuto (medido con una
+ráfaga de 8 llamadas); además `gemini-3.8-flash` respondió `503` por alta demanda y
+`gemini-flash-latest` dio timeouts. Subir `LLM_MAX_RETRIES` a 8 no bastó. Un run
+posterior terminó `fallido` por esos errores. Es un límite de cuota, no del panel ni
+del backend, pero **debe repetirse con una clave con cuota suficiente** antes de dar
+por validada la generación.
+
+### Hallazgo para el equipo: modelos Gemini retirados
+
+- El valor por defecto del código (`ai_modules/multiprovider_agent.py`) es
+  `gemini-2.5-flash` y `.env.example` documenta `gemini-1.5-flash`. Con una clave
+  nueva, `gemini-2.5-flash` responde `404 … no longer available to new users`.
+- Solución local usada: `GEMINI_MODEL` en el `.env` (probado: `gemini-3.5-flash` y
+  `gemini-flash-latest` responden). Conviene actualizar `.env.example` y el valor por
+  defecto; no se hizo aquí porque es código de backend (#28).
+
+### Cómo repetirlo
+
+1. `GEMINI_API_KEY` y `GEMINI_MODEL` en `.env`; bucket privado propio y `OCI_REGION`,
+   `OCI_BUCKET_NAME`, `OCI_CONFIG_PROFILE` (comentar `OCI_USER_OCID`, `OCI_TENANCY_OCID`,
+   `OCI_FINGERPRINT` y `OCI_KEY_FILE` para usar `~/.oci/config`).
+2. `uv run --frozen uvicorn api.main:app`, `uv run --frozen python -m orchestration.worker`
+   y `uv run --frozen streamlit run ui/app.py` (con `COMMUNITYLAB_WEBHOOK_SECRET`).
+3. Esperar al menos un minuto entre lotes si la clave es de capa gratuita.
