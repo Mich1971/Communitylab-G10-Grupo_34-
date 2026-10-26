@@ -396,7 +396,9 @@ async def generar_activos_marketing(
     system_post = (
         "Eres redactor de una comunidad tecnológica. Redacta una propuesta profesional "
         "para LinkedIn usando exclusivamente los datos proporcionados. No inventes cifras, "
-        "logros ni resultados. No afirmes que está aprobada o publicada."
+        "logros ni resultados. No afirmes que está aprobada o publicada. "
+        "Prohibido agregar reflexiones personales, proyecciones de carrera o emociones en primera "
+        "persona que no figuren literalmente en el texto de origen"
     )
     system_resumen = (
         "Eres editor de una comunidad tecnológica. Resume la actividad semanal para revisión "
