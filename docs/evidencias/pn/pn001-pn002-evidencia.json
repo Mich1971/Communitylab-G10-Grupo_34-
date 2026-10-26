@@ -1,0 +1,111 @@
+{
+  "run_id_original": "run-20261025T235808Z-b0292d96bdf0",
+  "pasos": [
+    {
+      "etapa": "PN-001 · 1) primer envío",
+      "http": 202,
+      "respuesta": {
+        "request_id": "req-pn-demo-001",
+        "run_id": "run-20261025T235808Z-b0292d96bdf0",
+        "estado": "en_cola",
+        "duplicado": false
+      },
+      "archivos_en_raw": 1
+    },
+    {
+      "etapa": "PN-001 · 2) reenvío idéntico",
+      "http": 200,
+      "respuesta": {
+        "request_id": "req-pn-demo-001",
+        "run_id": "run-20261025T235808Z-b0292d96bdf0",
+        "estado": "en_cola",
+        "duplicado": true
+      },
+      "archivos_en_raw": 1
+    },
+    {
+      "etapa": "PN-001 · 3) mismo contenido, otro orden de claves",
+      "http": 200,
+      "respuesta": {
+        "request_id": "req-pn-demo-001",
+        "run_id": "run-20261025T235808Z-b0292d96bdf0",
+        "estado": "en_cola",
+        "duplicado": true
+      },
+      "archivos_en_raw": 1
+    },
+    {
+      "etapa": "PN-001 · 4) 8 reenvíos idénticos en paralelo",
+      "http": [
+        200
+      ],
+      "respuesta": [
+        [
+          200,
+          "run-20261025T235808Z-b0292d96bdf0",
+          true
+        ]
+      ],
+      "archivos_en_raw": 1
+    },
+    {
+      "etapa": "PN-001 · 5) estado final en la base",
+      "solicitudes_con_ese_request_id": 1,
+      "hash_prefijo": "a4103d68b3c8"
+    },
+    {
+      "etapa": "PN-002 · 1) mismo request_id, un mensaje con otro texto",
+      "http": 409,
+      "respuesta": {
+        "error": "conflicto_idempotencia",
+        "detalle": "request_id ya registrado con contenido distinto; no se sobrescribe"
+      },
+      "archivos_en_raw": 1
+    },
+    {
+      "etapa": "PN-002 · 2) mismo request_id, otro periodo_referencia",
+      "http": 409,
+      "respuesta": {
+        "error": "conflicto_idempotencia",
+        "detalle": "request_id ya registrado con contenido distinto; no se sobrescribe"
+      },
+      "archivos_en_raw": 1
+    },
+    {
+      "etapa": "PN-002 · 3) mismo request_id, un mensaje menos",
+      "http": 409,
+      "respuesta": {
+        "error": "conflicto_idempotencia",
+        "detalle": "request_id ya registrado con contenido distinto; no se sobrescribe"
+      },
+      "archivos_en_raw": 1
+    },
+    {
+      "etapa": "PN-002 · 4) el original no cambió",
+      "solicitudes_con_ese_request_id": 1,
+      "hash_prefijo": "a4103d68b3c8",
+      "hash_igual_al_inicial": true
+    },
+    {
+      "etapa": "PN-002 · 5) estado del run original",
+      "respuesta": {
+        "run_id": "run-20261025T235808Z-b0292d96bdf0",
+        "request_id": "req-pn-demo-001",
+        "estado": "en_cola",
+        "recibido_en": "2026-10-25T23:58:08.381+00:00",
+        "actualizado_en": "2026-10-25T23:58:08.386+00:00"
+      }
+    },
+    {
+      "etapa": "Contraste · mismo contenido con otro request_id",
+      "http": 202,
+      "respuesta": {
+        "request_id": "req-pn-demo-001-b",
+        "run_id": "run-20261025T235808Z-3f133aee7dd9",
+        "estado": "en_cola",
+        "duplicado": false
+      },
+      "archivos_en_raw": 2
+    }
+  ]
+}
