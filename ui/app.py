@@ -136,6 +136,11 @@ def carga(api):
             payload = json.loads(raw)
             if not isinstance(payload, dict):
                 raise TypeError("sobre inválido")
+            if example:
+                # Genera un request_id único en cada envío de ejemplo para que el
+                # backend ejecute una corrida nueva en vez de devolver el duplicado previo.
+                base_req = str(payload.get("request_id") or "req_ejemplo").strip()
+                payload["request_id"] = f"{base_req}_{int(time.time())}"
             result = api.post("/interactions/process", payload)
             if not result.get("run_id"):
                 raise APIError("La API no confirmó el identificador del lote.")
@@ -315,10 +320,16 @@ def load_revision(api, number):
 def edited_assets():
     assets = copy.deepcopy(st.session_state.loaded_package["activos"])
     assets["post_linkedin"].update(
-        titulo=st.session_state.edit_li_title, cuerpo=st.session_state.edit_li_body
+        titulo=st.session_state.get("edit_li_title", assets["post_linkedin"]["titulo"]),
+        cuerpo=st.session_state.get("edit_li_body", assets["post_linkedin"]["cuerpo"]),
     )
     assets["resumen_semanal"].update(
-        titular=st.session_state.edit_su_title, resumen=st.session_state.edit_su_body
+        titular=st.session_state.get(
+            "edit_su_title", assets["resumen_semanal"]["titular"]
+        ),
+        resumen=st.session_state.get(
+            "edit_su_body", assets["resumen_semanal"]["resumen"]
+        ),
     )
     return assets
 

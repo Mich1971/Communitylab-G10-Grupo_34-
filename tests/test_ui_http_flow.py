@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import httpx
@@ -150,6 +151,47 @@ def test_oci_success_shows_idempotent_retry_notice(panel, monkeypatch, idempoten
     click(app, "Guardar o reintentar en OCI")
     assert app.success
     assert any("idempotente" in i.value for i in app.info) is idempotent
+
+
+def test_example_batch_uses_unique_request_id_each_time(panel):
+    app, client = panel
+    ids = []
+    for _ in range(2):
+        click(app, "Enviar datos de ejemplo")
+        assert not app.error
+        ids.append(app.session_state.current_run_id)
+        time.sleep(1.1)  # el sufijo es time(): dos envíos en el mismo segundo colisionan
+    assert ids[0] != ids[1]
+    assert not any("existente" in s.value for s in app.success)
+    request_ids = {
+        r["request_id"]
+        for r in client.get("/runs", limite=20)["items"]
+        if r["run_id"] in ids
+    }
+    assert len(request_ids) == 2
+    assert all(r.startswith("req-prueba-001_") for r in request_ids)
+
+
+def test_edited_assets_tolerates_missing_editor_keys():
+    def script():
+        import streamlit as st
+
+        from ui.app import edited_assets
+
+        st.session_state.loaded_package = {
+            "activos": {
+                "post_linkedin": {"titulo": "T1", "cuerpo": "B1"},
+                "resumen_semanal": {"titular": "T2", "resumen": "B2"},
+            }
+        }
+        assets = edited_assets()
+        st.session_state.resultado = assets
+        st.session_state.sin_cambios = assets == st.session_state.loaded_package["activos"]
+
+    app = AppTest.from_function(script, default_timeout=20).run()
+    assert not app.exception
+    assert app.session_state.sin_cambios is True
+    assert app.session_state.resultado["post_linkedin"]["titulo"] == "T1"
 
 
 def test_empty_and_failed_runs_remain_inspectable(panel, tmp_path):
