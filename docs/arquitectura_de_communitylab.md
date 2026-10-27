@@ -507,7 +507,7 @@ Implementada en [storage/oci_client.py]:
 Ubicada en [ai_modules/multiprovider_agent.py], desacopla la lógica de negocio de los proveedores de LLM:
 * **Conmutación en Caliente (*Hot-Swapping*):** Mediante la variable de entorno `LLM_PROVIDER`, el sistema conmuta sin tocar código entre:
   - **OpenAI:** `gpt-4o-mini` (titular de producción).
-  - **Google Gemini:** `gemini-3.5-flash` (calibración y velocidad).
+  - **Google Gemini:** `gemini-3.6-flash` (calibración y velocidad).
   - **Anthropic Claude:** `claude-haiku-4-5-20251001` (contingencia analítica).
   - **Groq / OpenRouter:** Compatible mediante endpoints estándar OpenAI.
 
@@ -557,7 +557,7 @@ La configuración está centralizada en `backend/config.py` y `api/config.py` a 
 | `COMMUNITYLAB_WEBHOOK_SECRET` | Token compartido para autenticar llamadas en la API perimetral y panel web | **Sí** | *(Sin defecto - Fail-Fast)* |
 | `LLM_PROVIDER` | Proveedor activo de IA (`openai`, `gemini`, `anthropic`) | No | `openai` |
 | `OPENAI_API_KEY` | Clave de API para OpenAI (`gpt-4o-mini`) | Condicional | - |
-| `GEMINI_API_KEY` | Clave de API para Google Gemini (`gemini-3.5-flash`) | Condicional | - |
+| `GEMINI_API_KEY` | Clave de API para Google Gemini (`gemini-3.6-flash`) | Condicional | - |
 | `ANTHROPIC_API_KEY` | Clave de API para Anthropic Claude | Condicional | - |
 | `COMMUNITYLAB_DATA_DIR` | Directorio raíz de datos compartidos (`raw`, `processing`, db) | No | `data/` |
 | `OCI_CONFIG_FILE` | Ruta al archivo de configuración del SDK de OCI | Condicional | `~/.oci/config` |

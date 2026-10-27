@@ -1,366 +1,625 @@
-> **Panel HTTP (25/10/2026):** consultar [ui/README.md](ui/README.md) para la ejecución actual. Requiere la API de curaduría; las capturas y descripciones del modo demo anteriores son antecedentes.
+# CommunityLab — Hackathon ONE G10 / No Country · Equipo 34
+> **Motor Inteligente de Transformación, Enriquecimiento Cognitivo y Distribución para Comunidades Digitales**  
+> *Versión Final Consolidada para el Demo Day — 27 de Octubre de 2026*
 
-# CommunityLab — Equipo 34 (Hackathon ONE G10 / NoCountry)
-> **Motor Inteligente de Transformación y Distribución para Comunidades Digitales**
+---
 
-[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![Package Manager: uv](https://img.shields.io/badge/package%20manager-uv-DE5FE9?style=flat&logo=astral&logoColor=white)](https://docs.astral.sh/uv/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.140-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![PydanticAI](https://img.shields.io/badge/PydanticAI-2.33-E92063?style=flat&logo=pydantic&logoColor=white)](https://ai.pydantic.dev/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-1.2-1C3C3C?style=flat&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.63-FF4B4B?style=flat&logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![Oracle Cloud](https://img.shields.io/badge/OCI%20Object%20Storage-Always%20Free-F80000?style=flat&logo=oracle&logoColor=white)](https://www.oracle.com/cloud/free/)
-[![Tests](https://img.shields.io/badge/Tests-20%20passing-brightgreen?style=flat&logo=pytest&logoColor=white)](#-evidencias-técnicas-suite-de-integración)
-
-Solución integral y desacoplada orientada a comunidades de aprendizaje, ecosistemas de desarrolladores y plataformas SaaS para capturar actividad no estructurada (Discord, Slack, GitHub, foros y formularios) y convertirla sistemáticamente en activos de marketing estructurados (publicaciones de LinkedIn y resúmenes semanales) con **política estricta de Cero Hechos Inventados**, ciclo de curaduría humana y persistencia inmutable en **Oracle Cloud Infrastructure (OCI Always Free)**.
+[![Python 3.11](https://img.shields.io/badge/Python-3.11.9-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Package Manager: uv](https://img.shields.io/badge/Package%20Manager-uv%20%3E%3D0.11-DE5FE9?style=for-the-badge&logo=astral&logoColor=white)](https://docs.astral.sh/uv/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.140-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Pydantic v2](https://img.shields.io/badge/Pydantic-v2.10-E92063?style=for-the-badge&logo=pydantic&logoColor=white)](https://docs.pydantic.dev/)
+[![PydanticAI](https://img.shields.io/badge/PydanticAI-2.33-blueviolet?style=for-the-badge&logo=pydantic&logoColor=white)](https://ai.pydantic.dev/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-1.2-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.63-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![Oracle Cloud](https://img.shields.io/badge/OCI%20Object%20Storage-Always%20Free-F80000?style=for-the-badge&logo=oracle&logoColor=white)](https://www.oracle.com/cloud/free/)
+[![Tests](https://img.shields.io/badge/Tests-379%20Passing%20(100%25)-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](#-8-evidencias-técnicas-y-criterios-de-aceptación)
 
 ---
 
 ## 📑 Tabla de Contenidos
 
-- [🎯 Propósito y Propuesta de Valor](#-propósito-y-propuesta-de-valor)
-- [🏗️ Arquitectura y Flujo del Sistema](#️-arquitectura-y-flujo-del-sistema)
-- [🛠️ Stack Tecnológico](#️-stack-tecnológico)
-- [📁 Estructura del Proyecto](#-estructura-del-proyecto)
-- [⚡ Guía de Inicio Rápido (Quickstart)](#-guía-de-inicio-rápido-quickstart)
-- [📋 Evidencias Técnicas: Suite de Integración](#-evidencias-técnicas-suite-de-integración)
-- [📚 Documentación Detallada del MVP](#-documentación-detallada-del-mvp)
+1. [🎯 1. Descripción General](#-1-descripción-general)
+   - [¿Qué es CommunityLab y qué problema resuelve?](#qué-es-communitylab-y-qué-problema-resuelve)
+   - [Los 5 Principios Fundamentales No Negociables](#los-5-principios-fundamentales-no-negociables)
+2. [🧠 2. Arquitectura de la Solución y Agentes de IA](#-2-arquitectura-de-la-solución-y-agentes-de-ia)
+   - [Estructura Interna del Agente y Orquestación con LangGraph](#estructura-interna-del-agente-y-orquestación-con-langgraph)
+   - [Inferencia Estructurada Tipada con PydanticAI](#inferencia-estructurada-tipada-con-pydanticai)
+   - [Scoring Objetivo de Relevancia (0 a 6 puntos)](#scoring-objetivo-de-relevancia-0-a-6-puntos)
+   - [Fábrica Multi-Proveedor y Conmutación en Caliente](#fábrica-multi-proveedor-y-conmutación-en-caliente)
+   - [Optimización mediante Prompt Caching y Políticas de Resiliencia](#optimización-mediante-prompt-caching-y-políticas-de-resiliencia)
+3. [🗺️ 3. Diagramas de Arquitectura del Pipeline](#️-3-diagramas-de-arquitectura-del-pipeline)
+   - [Diagrama de Flujo del Sistema Completo](#diagrama-de-flujo-del-sistema-completo)
+   - [Grafo de Estados de LangGraph (Pipeline Cognitivo)](#grafo-de-estados-de-langgraph-pipeline-cognitivo)
+   - [Ciclo de Vida de un Lote y Persistencia Dual](#ciclo-de-vida-de-un-lote-y-persistencia-dual)
+4. [🛠️ 4. Tecnologías y Herramientas (Stack Tecnológico)](#️-4-tecnologías-y-herramientas-stack-tecnológico)
+5. [📁 5. Estructura del Repositorio](#-5-estructura-del-repositorio)
+6. [🚀 6. Instrucciones de Uso: Guía Paso a Paso de Despliegue](#-6-instrucciones-de-uso-guía-paso-a-paso-de-despliegue)
+   - [Prerrequisitos](#1-prerrequisitos)
+   - [Instalación de uv y Clonación](#2-clonación-y-sincronización-del-entorno)
+   - [Variables de Entorno](#3-configuración-de-variables-de-entorno)
+   - [Ejecución de Pruebas](#4-ejecución-de-la-suite-de-pruebas)
+   - [Levantamiento de Servicios Locales (Paso a Paso)](#5-levantamiento-de-servicios-en-desarrollo-local)
+   - [Prueba de Punta a Punta (End-to-End)](#6-prueba-de-punta-a-punta-end-to-end)
+7. [🖥️ 7. Ejemplos de la Interfaz de Usuario (Frontend en Streamlit)](#️-7-ejemplos-de-la-interfaz-de-usuario-frontend-en-streamlit)
+   - [Paso 1: Carga y Validación Inmediata](#paso-1-carga-y-admisión)
+   - [Paso 2: Resultados y Dashboard Analítico](#paso-2-resultados-y-dashboard-analítico)
+   - [Paso 3: Edición y Aprobación de Copys con Trazabilidad](#paso-3-edición-y-aprobación-de-copys)
+   - [Paso 4: Persistencia y Evidencia en Oracle Cloud (OCI)](#paso-4-almacenamiento-y-evidencia-en-oci)
+8. [📊 8. Evidencias Técnicas y Criterios de Aceptación](#-8-evidencias-técnicas-y-criterios-de-aceptación)
+9. [📚 9. Documentación Técnica del Proyecto](#-9-documentación-técnica-del-proyecto)
 
 ---
 
-## 🎯 Propósito y Propuesta de Valor
+## 🎯 1. Descripción General
 
-Las comunidades digitales generan diariamente un alto volumen de testimonios de éxito, dudas recurrentes y avances técnicos que suelen perderse en canales de chat efímeros. **CommunityLab** automatiza la captura y refinamiento de estas interacciones bajo cuatro principios fundamentales:
+### ¿Qué es CommunityLab y qué problema resuelve?
 
-1. **Cero Hechos Inventados y Trazabilidad Forzada:** Todo contenido generado (LinkedIn y resumen semanal) exige la asociación obligatoria y no vacía de citas directas a los mensajes originales (`source_ids`).
-2. **Validación y Aislamiento en Dos Capas:** La API de admisión valida la autenticidad y el sobre del lote; el pipeline local aísla registros incompletos o sin texto hacia auditoría en SQLite, sin tumbar el procesamiento del resto del lote.
-3. **Scoring de Relevancia Objetivo (0–6 puntos):** Evaluación semántica basada en tres dimensiones discretas (evidencia explícita, utilidad comunitaria y contexto) con justificación documentada (`motivo_seleccion`).
-4. **Persistencia Inmutable con Doble Confirmación:** Versionado estricto de revisiones (`revision-001.json`, `revision-002.json`) en OCI Object Storage Always Free, con verificación activa de lectura por software tras cada operación de guardado.
+En comunidades de aprendizaje tecnológico, plataformas SaaS y ecosistemas de desarrolladores (como **Discord, Slack, foros educativos, GitHub y formularios web**), los usuarios comparten diariamente valiosos testimonios de éxito, soluciones a problemas complejos, bloqueos recurrentes y dudas formativas.
+
+Sin embargo, estos mensajes valiosos sufren de un problema común en la industria: **el ruido efímero**. Los mensajes quedan sepultados rápidamente en canales de chat interminables, provocando dos graves ineficiencias:
+1. **Pérdida de Conocimiento Colectivo:** Las dudas se repiten una y otra vez porque no se sintetizan en recursos públicos ni resúmenes semanales.
+2. **Desaprovechamiento de Casos de Éxito:** Los equipos de gestión de comunidad (*Community Managers*) y marketing no dan abasto para leer cientos de mensajes al día, identificar los logros reales y redactar contenido verídico y atractivo para redes profesionales como **LinkedIn**.
+
+**CommunityLab** es una plataforma desacoplada y orientada a eventos que resuelve este desafío. Captura lotes de interacciones comunitarias no estructuradas, aísla fallos en tiempo de ejecución, ejecuta un análisis cognitivo profundo mediante Inteligencia Artificial estructurada, y **redacta simultáneamente dos formatos de difusión pública**:
+* Una **publicación para LinkedIn** con enfoque editorial y hashtags profesionales.
+* Un **resumen semanal** que sintetiza el pulso, las tendencias y los aprendizajes del grupo.
+
+Todo esto bajo un flujo de **curaduría humana (*Human-in-the-Loop*)** con interfaz web interactiva y persistencia inmutable en **Oracle Cloud Infrastructure (OCI Always Free)**.
+
+```
+┌─────────────────────────┐      ┌─────────────────────────┐      ┌─────────────────────────┐
+│   Canales Comunitarios   │ ───> │  Pipeline Cognitivo IA  │ ───> │  Curaduría y Difusión   │
+│ (Discord, Slack, Foros) │      │  (LangGraph + Pydantic) │      │ (LinkedIn + Resumen OCI)│
+└─────────────────────────┘      └─────────────────────────┘      └─────────────────────────┘
+```
 
 ---
 
-## 🏗️ Arquitectura y Flujo del Sistema
-<img width="1024" height="768" alt="White Minimalist Modern Recruitment Process Flowchart" src="https://github.com/user-attachments/assets/542a6504-f1e6-400a-a1a6-ed450d3602e7" />
+### Los 5 Principios Fundamentales No Negociables
 
-El sistema implementa una arquitectura desacoplada y orientada a eventos dividida en 5 capas especializadas:
+Para asegurar que el sistema sea confiable, predecible y digno de uso empresarial, el equipo formalizó cinco principios técnicos clave:
+
+1. 🔒 **Política de Cero Hechos Inventados (*Zero Invented Facts*):**  
+   Los Modelos de Lenguaje Grande (LLMs) tienden a alucinar nombres, cargos o datos estadísticos cuando se les pide redactar un copy de marketing. En CommunityLab, **ningún texto puede generarse sin asociar de manera obligatoria una lista no vacía de identificadores de mensajes fuente (`source_ids >= 1`)**. Si una afirmación no proviene de un mensaje verificado en la ingesta, el validador de contratos rechaza el paquete automáticamente.
+2. 🛡️ **Validación en Dos Capas y Aislamiento de Fallos (Regla R1 / M03):**  
+   Imagina que una comunidad envía un lote con 100 mensajes, pero el mensaje número 42 viene sin texto o con una fecha mal formateada. En arquitecturas frágiles, la API arrojaría un error HTTP 422 y descartaría los 100 mensajes. En CommunityLab aplicamos dos capas:
+   - *Capa 1 (Admisión perimetral en FastAPI):* Permisiva en tipos (acepta fechas como cadenas de texto) para no tumbar transferencias por fallas menores.
+   - *Capa 2 (Pipeline de datos local):* Estricta registro a registro. Los mensajes con texto vacío o corrupto son segregados de inmediato hacia una tabla de auditoría en SQLite (`auditoria_rechazados`), mientras que los 99 mensajes sanos continúan hacia los agentes de IA.
+3. ⚖️ **Scoring Objetivo de Relevancia (0 a 6 puntos):**  
+   En lugar de pedirle al LLM un número arbitrario ("dime del 1 al 10 qué tan bueno es este mensaje"), obligamos al modelo a calificar **tres dimensiones discretas e independientes (de 0 a 2 puntos)**: evidencia explícita, utilidad comunitaria y claridad de contexto. El total es calculado aritméticamente por código Python, garantizando sumas matemáticas exactas.
+4. 📰 **Generación Simultánea de Formatos Base (Regla M01):**  
+   El motor detecta el enfoque predominante del lote (`Logro`, `Duda` o `Dificultad`) para calibrar el tono de voz, pero **siempre genera en simultáneo ambos formatos base**: publicación para LinkedIn y resumen semanal, acompañados de los casos no publicables para que el curador humano tenga el panorama completo.
+5. ☁️ **Persistencia Inmutable con Verificación Activa en OCI (Regla M07 / R7):**  
+   El estado `guardado_con_exito` en Oracle Cloud no se asume ciegamente. Tras ejecutar un `put_object`, el software realiza de inmediato un `get_object` leyendo el archivo remoto byte a byte y verifica que su hash criptográfico **SHA-256** sea exactamente igual al del archivo local. Además, cada edición humana crea una nueva revisión incremental (`revision-001.json`, `revision-002.json`), impidiendo la pérdida accidental de información histórica.
+
+---
+
+## 🧠 2. Arquitectura de la Solución y Agentes de IA
+
+### Estructura Interna del Agente y Orquestación con LangGraph
+
+En sistemas de producción, ejecutar llamadas a LLMs dentro de un script lineal simple es propenso a errores: si una llamada falla, se pierde el estado o es imposible reintentar fases específicas.
+
+CommunityLab implementa una **máquina de estados desacoplada utilizando LangGraph (`StateGraph`)**. Un grafo de estados permite dividir el procesamiento en etapas autónomas llamadas **nodos**, que leen y actualizan un estado inmutable compartido (`PipelineState`).
+
+```
+                              ┌──────────────────┐
+                              │  validar_datos   │
+                              └────────┬─────────┘
+                                       │
+                      ¿Hay registros   │
+                      válidos?         ├───────── NO ─────────> [ finalizar_lote_vacio ]
+                                       │
+                                      SÍ
+                                       ▼
+                              ┌──────────────────┐
+                              │analisis_cognitivo│
+                              └────────┬─────────┘
+                                       │
+                      ¿Hay contenido   │
+                      apto?            ├───────── NO ─────────> [finalizar_sin_contenido]
+                                       │
+                                      SÍ
+                                       ▼
+                              ┌──────────────────┐
+                              │  generar_copys   │
+                              └────────┬─────────┘
+                                       │
+                                       ▼
+                              ┌──────────────────┐
+                              │ persistencia_dual│
+                              └──────────────────┘
+```
+
+#### Los Nodos del Pipeline Explicados:
+1. `validar_datos`: Inspecciona cada interacción del lote. Convierte registros válidos en `InteraccionValidada` y desvía registros dañados a la tabla de auditoría (`auditoria_rechazados`). Si el lote completo está vacío, deriva inmediatamente a `finalizar_lote_vacio`.
+2. `analisis_cognitivo`: Envía los mensajes sanos al agente cognitivo (PydanticAI). Evalúa sentimiento, clasifica temas y calcula la puntuación de relevancia (0 a 6).
+3. `generar_copys`: Un router condicional evalúa si el lote tiene mensajes aptos para difusión pública. Si no los hay, deriva a `finalizar_sin_contenido`. Si los hay, redacta de forma paralela la publicación para LinkedIn y el resumen semanal, preservando la lista de citas (`source_ids`).
+4. `persistencia_dual`: Guarda los resultados en una única transacción atómica en SQLite v2 (19 tablas relacionales) y sube el borrador inicial (`revision-001.json`) a Oracle Cloud Infrastructure.
+
+---
+
+### Inferencia Estructurada Tipada con PydanticAI
+
+Los modelos LLM tradicionales generan cadenas de texto libre en Markdown o JSON que frecuentemente sufren de comas faltantes, llaves sin cerrar o tipos de datos incorrectos.
+
+Para solucionar esto, utilizamos **PydanticAI**, que fuerza al modelo a responder exclusivamente a través de los contratos formales definidos en [`esquemas.py`](esquemas.py):
+
+* **`AnalisisCognitivo`:** Garantiza que cada mensaje tenga su sentimiento en 4 clases discretas (`Literal["Altamente Positivo", "Positivo", "Neutro", "Dificultad/Negativo"]`), su categoría de enrutamiento (`Literal["Logro", "Duda", "Dificultad"]`), lista de temas y justificación obligatoria (`motivo_seleccion` con mínimo 10 caracteres).
+* **`PaqueteSalida`:** Garantiza la integridad del paquete final que incluye los copys de marketing (`PostLinkedIn`, `ResumenSemanal`), los casos no publicables (`CasoNoPublicable`), los metadatos de latencia y tokens (`MetadatosEjecucion`), el historial de revisión (`EstadoRevision`) y la evidencia en la nube (`EvidenciaAlmacenamientoOCI`).
+
+---
+
+### Scoring Objetivo de Relevancia (0 a 6 puntos)
+
+El modelo de datos [`PuntuacionRelevancia`](esquemas.py) descompone la evaluación en tres preguntas concretas:
+
+$$\text{Puntuación Total} = \text{Evidencia Explícita (0-2)} + \text{Utilidad Comunitaria (0-2)} + \text{Claridad de Contexto (0-2)}$$
+
+| Dimensión | Puntos (0 a 2) | ¿Qué evalúa el agente cognitivo? |
+|---|---|---|
+| **Evidencia Explícita** | 0 = Vago / Opinión<br>1 = Menciona herramientas<br>2 = Cita datos concretos, métricas o capturas | ¿El mensaje demuestra un logro o problema tangible con hechos comprobables? |
+| **Utilidad Comunitaria** | 0 = Interés puramente personal<br>1 = Aporta al canal<br>2 = Resuelve un bloqueo crítico común | ¿Este mensaje le sirve a otros estudiantes o miembros de la comunidad para aprender? |
+| **Claridad de Contexto** | 0 = Incomprensible fuera del chat<br>1 = Requiere contexto previo<br>2 = Totalmente autónomo | ¿El mensaje se entiende por sí solo al ser leído en LinkedIn o en un resumen semanal? |
+
+Un decorador `@model_validator(mode="after")` en Python calcula la suma aritmética del campo `total`. Esto impide que el LLM cometa errores matemáticos al sumar los puntos.
+
+---
+
+### Fábrica Multi-Proveedor y Conmutación en Caliente
+
+Ubicada en [`ai_modules/multiprovider_agent.py`](ai_modules/multiprovider_agent.py), la clase `CognitiveAgentFactory` desacopla completamente el código de cualquier proveedor comercial de Inteligencia Artificial.
+
+Mediante la variable de entorno `LLM_PROVIDER`, puedes cambiar el motor de IA en caliente sin tocar una sola línea de código:
+
+```bash
+# Cambiar entre proveedores en el archivo .env:
+LLM_PROVIDER=openai       # Utiliza gpt-4o-mini (Titular por defecto)
+LLM_PROVIDER=gemini       # Utiliza gemini-3.6-flash (Google GenAI)
+LLM_PROVIDER=anthropic    # Utiliza claude-haiku-4-5-20251001 (Anthropic)
+LLM_PROVIDER=groq         # Utiliza Llama 3 / Mistral sobre endpoints compatibles
+LLM_PROVIDER=openrouter   # Utiliza OpenRouter para enrutamiento flexible
+```
+
+---
+
+### Optimización mediante Prompt Caching y Políticas de Resiliencia
+
+1. ⚡ **Prompt Caching de Prefijo Nativo:**  
+   El catálogo de ejemplos (*few-shot*) y las directivas del sistema son extensos e idénticos en cada ejecución. El agente aprovecha el almacenamiento en caché de prefijo de los proveedores (OpenAI implícito, Anthropic declarativo `cache_control` y Gemini en memoria). Esto **ahorró más de 18.000 tokens por lote** en nuestras pruebas, reduciendo los costos de inferencia y disminuyendo la latencia de respuesta en más de un 60%.
+2. 🕵️ **Sanitización de Datos Personales (PII):**  
+   Antes de enviar cualquier mensaje al LLM o publicarlo en redes, la función `_enmascarar_pii` aplica filtros por expresiones regulares para anonimizar correos electrónicos, números de teléfono y credenciales privadas.
+3. 🛡️ **Privacidad en el Resumen Semanal:**  
+   Los mensajes catalogados como no aptos para difusión pública (`apto_para_publicacion = False`, por ejemplo, un estudiante con una dificultad sensible) son incluidos en las estadísticas agregadas de sentimiento, pero su texto textual es **estrictamente omitido** del resumen público.
+4. 🛟 **Degradación Elegante (*Graceful Degradation*):**  
+   Si la API del LLM se queda sin saldo (`HTTP 429 Cuota Excedida`) o sufre una caída de red, la función `_activos_degradados` genera automáticamente copys deterministas basados en plantillas con los temas y entidades detectados, garantizando que el pipeline concluya con éxito sin interrumpir la operación.
+
+---
+
+## 🗺️ 3. Diagramas de Arquitectura del Pipeline
+
+### Diagrama de Flujo del Sistema Completo
+
+El siguiente diagrama ilustra cómo viaja la información a través de las cuatro capas de la plataforma:
 
 ```mermaid
 flowchart LR
-    subgraph Fuentes["1. Fuentes"]
-        canales["Discord / Slack / GitHub"]
+    subgraph S1["1. Fuentes y Admisión"]
+        canales["Discord / Slack / Foros"]
         n8n["n8n Workflow Engine"]
+        api["FastAPI Backend<br/>(POST /interactions/process)"]
+        raw[("data/raw/<br/>{run_id}.json")]
     end
 
-    subgraph Transporte["2. Ingesta y Transporte"]
-        api["FastAPI<br/>(X-Webhook-Secret)"]
-        raw[("data/raw/<br/>JSON Atómicos")]
+    subgraph S2["2. Worker y Pipeline LangGraph"]
+        worker["Worker Asíncrono<br/>(orchestration/worker.py)"]
+        validador["Nodo: validar_datos<br/>(Aislamiento de fallos)"]
+        agente_analisis["Nodo: analisis_cognitivo<br/>(PydanticAI + Prompt Cache)"]
+        agente_copys["Nodo: generar_copys<br/>(LinkedIn + Resumen Semanal)"]
     end
 
-    subgraph Pipeline["3. Pipeline Local y Auditoría"]
-        validador["Validador por Registro<br/>(data_pipeline)"]
-        sqlite[("SQLite Local<br/>(Auditoría y Analítica)")]
+    subgraph S3["3. Persistencia Dual"]
+        sqlite[("SQLite Local v2<br/>(19 tablas relacionales)")]
+        oci[("Oracle Cloud (OCI)<br/>(Bucket Always Free)")]
     end
 
-    subgraph Cognitivo["4. Agentes e Inferencia"]
-        langgraph["Orquestador<br/>(LangGraph)"]
-        pydantic_ai["Agentes Cognitivos<br/>(PydanticAI)"]
-        llm["LLM Multi-proveedor<br/>(OpenAI / Gemini / Claude)"]
+    subgraph S4["4. Curaduría Humana"]
+        curaduria_api["FastAPI Rutas Curaduría<br/>(10 endpoints /api/v1)"]
+        streamlit["Panel Streamlit<br/>(ui/app.py - Cliente HTTP)"]
+        curador(("Curador Humano"))
     end
 
-    subgraph Curaduria["5. Curaduría y Cloud"]
-        ui["Panel Streamlit<br/>(Curaduría Humana)"]
-        oci[("OCI Object Storage<br/>(Always Free Inmutable)")]
-    end
-
-    canales --> n8n
-    n8n -->|HTTP POST + request_id| api
-    api -->|Escritura atómica| raw
-    raw --> validador
-    validador -->|Registros inválidos / vacíos| sqlite
-    validador -->|InteraccionValidada| langgraph
-    langgraph <--> pydantic_ai
-    pydantic_ai <--> llm
-    langgraph -->|Borrador revision-001| oci
-    langgraph -->|Métricas y análisis| sqlite
-    sqlite --> ui
-    ui -->|Aprobación revision-002| oci
+    canales -->|Eventos| n8n
+    n8n -->|HTTP + Secret| api
+    api -->|Depósito atómico| raw
+    raw -->|Reclamo con lock| worker
+    worker --> validador
+    validador -->|Mensajes defectuosos| sqlite
+    validador -->|Mensajes válidos| agente_analisis
+    agente_analisis --> agente_copys
+    agente_copys -->|Transacción atómica| sqlite
+    agente_copys -->|Subida + Verificación SHA-256| oci
+    curador <-->|Revisión, edición y aprobación| streamlit
+    streamlit <-->|HTTP X-Webhook-Secret| curaduria_api
+    curaduria_api <-->|Lecturas PRAGMA query_only| sqlite
+    curaduria_api -->|Nueva revisión / Sync| oci
 ```
-### Recorrido Operativo de los Datos
-
-
-1. **Ingesta:** Los eventos de chat se capturan y normalizan vía n8n, enviando una petición HTTP autenticada a FastAPI. La API valida la firma compartida (`X-Webhook-Secret`), verifica idempotencia mediante hash SHA-256 y almacena atómicamente el lote en `data/raw/{run_id}.json`.
-2. **Validación:** El módulo `data_pipeline/validador.py` examina cada registro. Si un mensaje carece de texto, se desvía a la tabla de auditoría en SQLite; los registros válidos avanzan como `InteraccionValidada`.
-3. **Análisis Cognitivo y Ruteo:** El agente en PydanticAI evalúa sentimiento, temas y calcula la `PuntuacionRelevancia` (0–6). El router de LangGraph determina la temática editorial (`Logro`, `Duda`, `Dificultad`).
-4. **Generación Dual de Activos:** Se generan simultáneamente la publicación para LinkedIn y el boletín semanal vinculando los `source_ids`.
-5. **Curaduría y Sincronización:** Se genera el borrador inicial (`revision-001.json`) y se sincroniza en OCI Object Storage Always Free. El curador revisa, edita o aprueba en Streamlit, creando una versión inmutable (`revision-002.json`).
 
 ---
 
-## 🛠️ Stack Tecnológico
+### Grafo de Estados de LangGraph (Pipeline Cognitivo)
 
-| Capa / Dominio | Tecnología | Versión | Propósito en el Proyecto |
+Representación detallada de las transiciones de estado internas dentro de [`orchestration/pipeline_runner.py`](orchestration/pipeline_runner.py):
+
+```mermaid
+stateDiagram-v2
+    [*] --> validar_datos
+    
+    state validar_datos {
+        [*] --> filtrar_registros
+        filtrar_registros --> aislar_vacios_a_auditoria
+    }
+
+    validar_datos --> finalizar_lote_vacio : ¿Sin registros válidos?
+    validar_datos --> analisis_cognitivo : ¿Hay al menos 1 válido?
+
+    state analisis_cognitivo {
+        [*] --> inferencia_pydantic_ai
+        inferencia_pydantic_ai --> scoring_relevancia_0_6
+        scoring_relevancia_0_6 --> calculo_polaridad_resumen
+    }
+
+    analisis_cognitivo --> finalizar_sin_contenido : ¿Sin contenido apto?
+    analisis_cognitivo --> generar_copys : ¿Hay mensajes aptos?
+
+    state generar_copys {
+        [*] --> enrutamiento_editorial
+        enrutamiento_editorial --> redactar_post_linkedin
+        enrutamiento_editorial --> redactar_resumen_semanal
+        enrutamiento_editorial --> derivar_casos_no_publicables
+    }
+
+    generar_copys --> persistencia_dual
+    
+    state persistencia_dual {
+        [*] --> transaccion_sqlite_19_tablas
+        transaccion_sqlite_19_tablas --> upload_oci_always_free
+        upload_oci_always_free --> active_check_sha256
+    }
+
+    persistencia_dual --> [*]
+    finalizar_lote_vacio --> [*]
+    finalizar_sin_contenido --> [*]
+```
+
+---
+
+### Ciclo de Vida de un Lote y Persistencia Dual
+
+1. **Admisión Asíncrona (FastAPI):** Al recibir un lote en `POST /api/v1/interactions/process`, la API verifica el secreto `X-Webhook-Secret`, comprueba la idempotencia del lote con un hash SHA-256 (para no procesar dos veces el mismo envío accidental) y responde de inmediato con `HTTP 202 Accepted` (`{"run_id": "...", "estado": "en_cola"}`).
+2. **Exclusión Mutua del Worker (`worker.lock`):** El worker local reclama archivos de `data/raw/` utilizando bloqueos de archivo multiplataforma (`msvcrt` en Windows, `fcntl` en Linux/macOS), garantizando que dos procesos nunca colisionen al procesar el mismo lote.
+3. **Persistencia Local Relacional (SQLite v2):** Gestionada en [`storage/local_db.py`](storage/local_db.py) sobre `data/communitylab.db`:
+   - Opera en **modo WAL** (`PRAGMA journal_mode = WAL`) para lecturas y escrituras simultáneas de alto rendimiento sin bloqueos de base de datos.
+   - Utiliza **claves primarias compuestas `PRIMARY KEY (run_id, source_id)`** en la tabla nuclear `mensajes_analizados` y sus tablas hijas (`mensaje_temas`, `mensaje_entidades`, etc.), eliminando cualquier posibilidad de colisión entre lotes concurrentes.
+   - Cuenta con **19 tablas relacionales y 6 vistas analíticas** optimizadas.
+4. **Persistencia Cloud Inmutable (Oracle Cloud):** Gestionada en [`storage/oci_client.py`](storage/oci_client.py):
+   - Almacena los paquetes bajo la jerarquía: `activos/{periodo_referencia}/{run_id}/revision-{numero_revision:03d}.json`.
+   - Realiza la **comprobación activa de lectura byte a byte** comparando el hash SHA-256 remoto antes de certificar el almacenamiento.
+
+---
+
+## 🛠️ 4. Tecnologías y Herramientas (Stack Tecnológico)
+
+El stack tecnológico de CommunityLab está congelado y especificado formalmente en el archivo [`pyproject.toml`](pyproject.toml):
+
+| Dominio | Tecnología | Versión | ¿Por qué se eligió? Rol en el Proyecto |
 | :--- | :--- | :--- | :--- |
-| **Runtime & Lockfile** | Python / uv | `3.11.*` / `>=0.5` | Entorno de ejecución reproducible con `uv.lock` determinista en Windows, macOS y Linux. |
-| **Ingesta & Transporte** | FastAPI / Uvicorn | `0.140.*` / `>=0.30` | Endpoint perimetral de admisión, verificación de webhook y persistencia atómica. |
-| **Automatización Externa** | n8n | Standalone / Docker | Normalización de eventos desde plataformas de chat hacia el formato del sobre canónico. |
-| **Validación de Esquemas** | Pydantic v2 | `>=2.10` | Validación estricta de contratos en dos capas (`IngestionLote`, `InteraccionValidada`). |
-| **Agentes Cognitivos** | PydanticAI | `>=2.33,<3.0` | Inferencia estructurada determinista, clasificación temática y cálculo de relevancia. |
-| **Orquestación de Flujo** | LangGraph | `>=1.2,<1.3` | Máquina de estados desacoplada, políticas de reintento y bifurcaciones condicionales. |
-| **Curaduría & Visualización** | Streamlit | `>=1.63,<1.64` | Panel interactivo para revisión humana, edición de borradores y visualización analítica. |
-| **Persistencia Local** | SQLite | `3.*` | Almacenamiento relacional para auditoría de descartes y métricas comunitarias. |
-| **Persistencia Cloud** | OCI Object Storage | `>=2.185` (`oci` SDK) | Repositorio de la verdad inmutable Always Free con verificación activa de lectura. |
-| **Observabilidad** | structlog | `>=26.1,<27` | Logging estructurado JSON contextual con sanitización automática de datos sensibles (PII). |
+| **Lenguaje** | **Python** | `==3.11.*` | Estabilidad, compatibilidad con tipado estricto y soporte universal en librerías de IA. |
+| **Gestor de Paquetes** | **uv (Astral)** | `>=0.11` | Instalación ultrarrápida (en milisegundos), resolución de dependencias determinista y lockfile congelado (`uv.lock`). |
+| **Backend API** | **FastAPI + Uvicorn** | `>=0.140,<0.141` | Alto rendimiento asíncrono, generación automática de documentación OpenAPI y tipado con Pydantic. |
+| **Modelado y Tipado** | **Pydantic v2** | `>=2.10` | Validación estricta en tiempo de ejecución, conversión de tipos y validadores de modelo `@model_validator`. |
+| **Agentes de IA** | **PydanticAI** | `>=2.33,<3.0` | Inferencia estructurada que garantiza que los LLMs respondan exactamente bajo los contratos canónicos. |
+| **Orquestación** | **LangGraph** | `>=1.2,<1.3` | Máquinas de estados finitos, grafos cíclicos/acíclicos y manejo estructurado de flujos de IA. |
+| **Base de Datos Local** | **SQLite 3 (WAL)** | Integrada | Base de datos relacional ultraligera para auditoría, colas de descarte y analítica sin dependencias externas. |
+| **Almacenamiento Cloud** | **OCI SDK (Always Free)** | `>=2.185,<3.0` | Repositorio de la verdad inmutable en Oracle Cloud Infrastructure con verificación criptográfica SHA-256. |
+| **Frontend Web** | **Streamlit** | `>=1.63,<1.64` | Creación rápida de interfaces interactivas para curaduría humana conectada como cliente HTTP puro. |
+| **Cliente HTTP** | **HTTPX** | `>=0.27` | Cliente HTTP asíncrono y síncrono para la comunicación entre la UI de Streamlit y la API FastAPI. |
+| **Observabilidad** | **structlog** | `>=26.1,<27` | Registro de eventos en formato JSON estructurado con contexto y sanitización automática de datos sensibles. |
+| **Pruebas Automatizadas** | **pytest** | `>=9.1,<10` | Suite de pruebas unitarias, de integración, de frontera HTTP y de interfaz con `AppTest`. |
 
 ---
 
-## 📁 Estructura del Proyecto
+## 📁 5. Estructura del Repositorio
+
+La arquitectura sigue una organización modular limpia, separando claramente transporte, lógica de negocio, datos e interfaz:
 
 ```text
-Communitylab-G10-Grupo_34-/
-├── .env.example              # Plantilla de variables de entorno requeridas
-├── pyproject.toml            # Definición formal del proyecto, dependencias y pytest
-├── uv.lock                   # Lockfile congelado para instalación determinista
-├── esquemas.py               # Contratos canónicos Pydantic (Única fuente de verdad)
-├── api/                      # Capa de transporte e ingesta HTTP (FastAPI)
-│   ├── main.py               # Endpoints perimetrales y control de idempotencia
-│   └── dependencies.py       # Validación de secretos compartidos de webhooks
-├── data_pipeline/            # Procesamiento y validación local registro por registro
-│   ├── __init__.py
-│   └── validador.py          # Separador de registros válidos y descarte a auditoría
-├── ai_modules/               # Módulos de inteligencia artificial con PydanticAI
-│   ├── cognitive_analyzer.py # Análisis de sentimiento, temas y scoring 0-6
-│   ├── copy_generator.py     # Generadores de LinkedIn y boletín con source_ids
-│   └── prompts/              # Directrices editoriales y prompts versionados
-├── orchestration/            # Coordinación del grafo de ejecución con LangGraph
-│   └── pipeline_runner.py    # Máquina de estados y derivación condicional
-├── storage/                  # Persistencia dual (SQLite y OCI Object Storage)
-│   ├── oci_client.py         # Cliente SDK OCI con verificación activa de lectura
-│   └── local_db.py           # Gestor de base de datos relacional SQLite
-├── ui/                       # Interfaz gráfica de curaduría para el gestor de comunidad
-│   └── app.py                # Aplicación Streamlit para revisión y aprobación
-├── data/
-│   ├── raw/                  # JSONs de ingesta atómica y lotes de prueba sintéticos
-│   └── communitylab.db       # Base de datos SQLite local generada en ejecución
-├── docs/                     # Documentación técnica exhaustiva del MVP
-│   ├── arquitectura_de_communitylab.md  # Documento maestro de arquitectura
-│   ├── SETUP.md              # Guía de configuración avanzada con uv
-│   └── CONTRIBUTING.md       # Convenciones Git, ramas y gobernanza de esquemas
-└── tests/                    # Suite de pruebas unitarias y de integración
-    ├── test_oci_client.py    # Pruebas del cliente OCI (unitarias y mocking)
-    └── test_primera_prueba.py# Criterios de aceptación: 4 recibidos -> 3 válidos, 1 rechazado
+CommunityLab/
+├── AGENTS.md                  # Fuente única de verdad y reglas para agentes de código
+├── README.md                  # Este documento técnico y guía de despliegue
+├── pyproject.toml             # Manifiesto formal de dependencias fijadas en Python 3.11
+├── uv.lock                    # Lockfile determinista que congela todas las librerías
+├── .env.example               # Plantilla de variables de entorno requeridas
+├── esquemas.py               # Contratos canónicos Pydantic (ÚNICA FUENTE DE VERDAD)
+│
+├── api/                       # Capa de transporte e ingesta HTTP (FastAPI)
+│   ├── main.py               # Endpoint de admisión asíncrona (POST /interactions/process)
+│   ├── rutas_curaduria.py    # Las 10 operaciones HTTP de consulta, revisión y OCI
+│   ├── dependencies.py       # Verificación de autenticación X-Webhook-Secret
+│   └── config.py             # Configuración perimetral con pydantic-settings
+│
+├── data_pipeline/             # Validación registro a registro y aislamiento de fallos
+│   └── validador.py          # Separador de válidos y adaptador del formato oficial
+│
+├── ai_modules/                # Agentes cognitivos e inferencia estructurada
+│   ├── cognitive_analyzer.py # Agente de análisis de sentimiento, temas y scoring 0-6
+│   ├── generador.py          # Agente generador simultáneo de LinkedIn y Resumen Semanal
+│   ├── multiprovider_agent.py# Fábrica multi-proveedor (OpenAI, Gemini, Claude, Groq)
+│   └── prompts/              # Catálogo de directrices few-shot versionadas
+│
+├── orchestration/            # Coordinación del flujo y worker desacoplado
+│   ├── pipeline_runner.py    # Grafo de estados con LangGraph (PipelineState)
+│   ├── worker.py             # Worker en segundo plano con exclusión mutua (worker.lock)
+│   └── invariantes.py        # Verificación estricta de políticas de Cero Hechos Inventados
+│
+├── storage/                  # Persistencia dual (Local + Cloud)
+│   ├── local_db.py           # Gestor de base de datos SQLite v2 (19 tablas relacionales)
+│   ├── consultas.py          # Lecturas de curaduría bajo PRAGMA query_only = ON
+│   ├── revisiones.py         # Registro de revisiones inmutables y control optimista (409)
+│   ├── modelos_curaduria.py  # Modelos Pydantic v2 para las respuestas de la API
+│   └── oci_client.py         # Conector oficial SDK de Oracle Cloud Infrastructure
+│
+├── ui/                       # Frontend web de curaduría humana (Streamlit)
+│   ├── app.py                # Interfaz en 4 pasos (Carga, Resultados, Edición, OCI)
+│   ├── api_client.py         # Cliente HTTP puro que consume las 10 rutas de la API
+│   ├── styles.css            # Estilos personalizados (verde petróleo corporativo)
+│   └── assets/               # Identidad visual y logotipo oficial de CommunityLab
+│
+├── data/                      # Almacenamiento local compartido
+│   ├── raw/                  # Punto de convergencia (JSON atómicos por lote)
+│   ├── samples/              # Lotes de prueba oficiales (logros, dudas, dificultades)
+│   └── communitylab.db       # Base de datos SQLite local (ignorado en git)
+│
+├── tests/                     # Suite completa de pruebas automatizadas con pytest
+└── docs/                      # Documentación arquitectónica, manuales y evidencias
+    ├── arquitectura_de_communitylab.md  # Documento maestro exhaustivo de arquitectura
+    ├── SETUP.md              # Guía avanzada de configuración con uv
+    └── screenshots/          # Capturas de pantalla de la interfaz de usuario
 ```
-```
 
-## 📦 Estado actual del código
+---
 
+## 🚀 6. Instrucciones de Uso: Guía Paso a Paso de Despliegue
 
-| Componente | Contrato / módulo | Estado |
-| :--- | :--- | :---: |
-| Contratos de datos (Pydantic) | `esquemas.py` (`IngestionLote`, `AnalisisCognitivo`, `PaqueteSalida`) | ✅ Implementado y acordado por el equipo |
-| Capa de Admisión y Adaptador de Frontera | `validador.py` (`adaptar_payload_oficial`) | ✅ Implementado (Homologa JSON plano del jurado) |
-| Validación local en 2 capas | `validador.py` | ✅ Implementado |
-| Panel de curaduría (Streamlit) | `ui/app.py`, `ui/styles.css`, `ui/mock_pipeline.py`, `ui/storage_demo.py` | ✅ Implementado (análisis y OCI aún simulados, ver sección abajo) |
-| Análisis cognitivo real (LLM) | `ai_modules/cognitive_analyzer.py` | ⏳ Pendiente |
-| Generación de copy real (LLM) | `ai_modules/copy_generator.py` | ⏳ Pendiente |
-| Orquestación (LangGraph) | `orchestration/pipeline_runner.py` | ⏳ Pendiente |
-| Cliente OCI Object Storage real | `storage/oci_client.py` | ⏳ Pendiente (`ui/storage_demo.py` simula solo en disco local mientras tanto) |
-| API de ingesta (FastAPI) | `api/` | ⏳ Pendiente |
-
-  ```
-  ---
-
-## ⚡ Guía de Inicio Rápido (Quickstart)
+Esta guía está redactada para que cualquier desarrollador (incluyendo programadores en formación) pueda clonar, configurar y ejecutar el proyecto completo en su computadora local en pocos minutos.
 
 ### 1. Prerrequisitos
 
-El proyecto requiere **Python 3.11** y **[uv](https://docs.astral.sh/uv/)**. Si aún no dispones de `uv`:
+* **Python 3.11:** (Obligatorio; fijado en `.python-version` y `pyproject.toml`).
+* **uv:** El gestor de paquetes moderno y ultrarrápido para Python.
+  * *En Windows (PowerShell):*
+    ```powershell
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+    ```
+  * *En macOS / Linux:*
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
 
-- **Windows (PowerShell):**
+---
+
+### 2. Clonación y Sincronización del Entorno
+
+1. Abre tu terminal y clona el repositorio:
+   ```bash
+   git clone https://github.com/No-Country-simulation/Communitylab-G10-Grupo_34-.git
+   cd Communitylab-G10-Grupo_34-
+   ```
+2. Sincroniza el entorno virtual con **`uv`**:
+   ```bash
+   uv sync
+   ```
+   > 💡 **¿Qué hace este comando?**  
+   > `uv sync` lee el archivo congelado `uv.lock`, descarga la versión exacta de Python 3.11 si no la tienes en tu equipo, crea la carpeta aislada `.venv` e instala exactamente las mismas dependencias declaradas en el proyecto. ¡Sin sorpresas de incompatibilidad de librerías!
+
+---
+
+### 3. Configuración de Variables de Entorno
+
+Copia la plantilla de variables de entorno para crear tu archivo local `.env`:
+
+* *En Windows (PowerShell):*
   ```powershell
-  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+  Copy-Item .env.example .env
   ```
-
-- **macOS / Linux:**
+* *En macOS / Linux:*
   ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+  cp .env.example .env
   ```
 
-### 2. Clonar el Repositorio y Sincronizar Entorno
+Abre el archivo `.env` en tu editor de código y define tus credenciales:
+```ini
+# Secreto compartido para autenticar llamadas entre Frontend y Backend (Mínimo 16 caracteres)
+COMMUNITYLAB_WEBHOOK_SECRET=tu_secreto_super_seguro_de_al_menos_16_caracteres
 
-```bash
-git clone https://github.com/No-Country-simulation/Communitylab-G10-Grupo_34-.git
-cd Communitylab-G10-Grupo_34-
+# Proveedor de IA activo: openai | gemini | anthropic | groq | openrouter
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
 
-# uv descarga Python 3.11 (si es necesario), crea el .venv e instala las dependencias exactas:
-uv sync
+# Si deseas utilizar Google Gemini:
+# LLM_PROVIDER=gemini
+# GEMINI_API_KEY=AIzaSy...
+
+# Si deseas utilizar Anthropic Claude:
+# LLM_PROVIDER=anthropic
+# ANTHROPIC_API_KEY=sk-ant-...
+
+# Configuración de Oracle Cloud Infrastructure (Always Free)
+# Si no cuentas con credenciales OCI al inicio, el sistema guardará en SQLite
+# y registrará status_almacenamiento="guardado_error" sin interrumpir el flujo.
+OCI_CONFIG_FILE=~/.oci/config
+OCI_KEY_FILE=~/.oci/oci_api_key.pem
+OCI_NAMESPACE=tu_tenancy_namespace
+OCI_BUCKET_NAME=communitylab-activos-marketing
+OCI_REGION=mx-queretaro-1
 ```
 
-### 3. Configurar Variables de Entorno
+---
 
-Copia la plantilla `.env.example` a un archivo local `.env`:
+### 4. Ejecución de la Suite de Pruebas
 
-```bash
-cp .env.example .env
-```
-
-Configura tus credenciales en `.env`:
-- `COMMUNITYLAB_WEBHOOK_SECRET`: Token para autorizar llamadas desde n8n.
-- `OCI_CONFIG_FILE` / `OCI_KEY_FILE`: Rutas a las credenciales de Oracle Cloud Infrastructure.
-- `OCI_NAMESPACE` / `OCI_BUCKET_NAME`: Parámetros del bucket Always Free de OCI.
-- `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`: Llaves de acceso a proveedores de LLM.
-
-### 4. Ejecutar la Suite de Pruebas
-
-Para validar la correcta configuración del entorno, contratos y lógica de negocio:
+Antes de iniciar los servicios, verifica que todo el código esté funcionando al 100%:
 
 ```bash
 uv run pytest
 ```
 
-### 5. Levantar los Servicios Locales
+La suite ejecutará automáticamente **379 pruebas unitarias y de integración**, evaluando los contratos Pydantic, la base de datos SQLite, las rutas de la API, el aislamiento de registros dañados y la interfaz de usuario:
 
-Para iniciar la API de admisión (FastAPI):
+```text
+======================= 379 passed, 1 skipped, 2 deselected in 206s =======================
+```
+
+---
+
+### 5. Levantamiento de Servicios en Desarrollo Local
+
+Para ver el sistema en acción, recomendamos abrir **tres terminales** dentro de la carpeta del proyecto:
+
+#### 🖥️ Terminal 1: Iniciar el Backend API (FastAPI)
 ```bash
 uv run uvicorn api.main:app --reload --port 8000
 ```
+* La API estará escuchando en: `http://127.0.0.1:8000`
+* Documentación interactiva Swagger: `http://127.0.0.1:8000/docs`
 
-Para abrir el panel de curaduría de contenidos (Streamlit):
+#### ⚙️ Terminal 2: Iniciar el Worker Asíncrono de Procesamiento
+```bash
+uv run python -m orchestration.worker
+```
+* El worker se quedará vigilando la carpeta `data/raw/`. En cuanto un lote sea recibido por la API, el worker lo tomará con exclusión mutua (`worker.lock`) y ejecutará el pipeline de LangGraph.
+
+#### 🌐 Terminal 3: Iniciar el Panel de Curaduría Web (Streamlit)
 ```bash
 uv run streamlit run ui/app.py
 ```
+* La interfaz de usuario se abrirá automáticamente en tu navegador en: `http://localhost:8501`
 
 ---
 
-## 📋 Evidencias Técnicas: Suite de Integración
+### 6. Prueba de Punta a Punta (End-to-End)
 
-### Dataset de Prueba Sintético (`data/raw/lote_prueba_01.json`)
+¡Puedes probar el flujo completo de dos maneras sencillas!
 
-Diseñado para someter a prueba los cuatro escenarios canónicos exigidos por la arquitectura:
-- **`msg_001` (Logro / Testimonio):** Éxito de despliegue en OCI (`Usuario_Alfa`).
-- **`msg_002` (Logro / Avance):** Completitud de esquemas en Pydantic (`Usuario_Beta`).
-- **`msg_003` (Duda Técnica):** Consulta de configuración de webhooks en n8n (`Usuario_Gamma`).
-- **`msg_004` (Registro Defectuoso):** Mensaje con `texto: ""` para comprobar el aislamiento de fallos (`Usuario_Delta`).
+#### Opción A: Desde la Interfaz Web (Recomendada)
+1. Entra a `http://localhost:8501`.
+2. En la pantalla inicial de **Carga**, haz clic en el botón **«Usar lote de ejemplo»** o arrastra el archivo [`data/samples/lote_prueba_01.json`](data/samples/lote_prueba_01.json).
+3. El frontend enviará el lote a la API, el Worker procesará los datos con LangGraph y la interfaz te mostrará automáticamente el avance hasta llegar a los resultados.
 
-### Resultados de Ejecución Automática
-
-
-Comando ejecutado:
+#### Opción B: Enviando un Webhook vía Terminal (cURL o PowerShell)
 ```bash
-uv run pytest
+curl -X POST "http://127.0.0.1:8000/api/v1/interactions/process" \
+     -H "Content-Type: application/json" \
+     -H "X-Webhook-Secret: tu_secreto_super_seguro_de_al_menos_16_caracteres" \
+     -d @data/samples/lote_prueba_01.json
 ```
-### 4. Validación del Adaptador con el Formato Oficial de la Hackatón
-Para certificar que el sistema no falle ante los datos planos provistos por el jurado evaluador, se implementó un test de integración que valida la transformación de la frontera ("Inbound") y la segregación de registros corruptos en tiempo de ejecución.
-
-Comando ejecutado:
-```bash
-uv run pytest test_adaptador.py -v
+La API responderá inmediatamente:
+```json
+{
+  "request_id": "req-hackathon-g10-001",
+  "run_id": "run-20261027T010000Z-a1b2c3d4",
+  "estado": "en_cola",
+  "mensaje": "Lote admitido para procesamiento asíncrono"
+}
 ```
-
-**Salida de consola obtenida (100% PASSED):**
-```text
-test_adaptador.py::test_adaptador_y_validacion_payload_oficial PASSED                                                            [100%]
-
-========================================================== 1 passed in 0.17s ===========================================================
-```
-
-**Salida de consola obtenida (4 pruebas, todas en verde):**
-```text
-tests/test_frontend.py::test_review_flow_and_edit_invalidation PASSED
-tests/test_frontend.py::test_local_storage_idempotence_and_collision PASSED
-tests/test_primera_prueba.py::test_validacion_lote_prueba_01 PASSED
-tests/test_primera_prueba.py::test_contrato_paquete_distribucion_generado PASSED
-```
-
-```
-
-Salida de la suite:
-```text
-============================= test session starts =============================
-platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0
-rootdir: Communitylab-G10-Grupo_34-
-configfile: pyproject.toml
-testpaths: tests
-plugins: anyio-4.15.1, langsmith-0.14.2, logfire-5.1.1, platformdirs-4.12.2
-collected 21 items / 1 deselected / 20 selected
-
-tests\test_oci_client.py ..................                              [ 90%]
-tests\test_primera_prueba.py ..                                          [100%]
-
-====================== 20 passed, 1 deselected in 2.69s =======================
-```
-### Matriz de Criterios de Aceptación Superados
-
-| Criterio Arquitectónico | Resultado Esperado | Evidencia Técnica | Estado |
-| :--- | :--- | :--- | :---: |
-| **Transporte e Ingesta** | Admisión sin caída ante registros vacíos | Sobre `IngestionLote` procesa el lote de 4 elementos sin descartarlo | ✅ Superado |
-| **Aislamiento en Dos Capas** | 3 válidos a IA y 1 rechazado a auditoría | `data_pipeline/validador.py` deriva `msg_004` a auditoría y emite 3 `InteraccionValidada` | ✅ Superado |
-| **Trazabilidad Factual** | Cero hechos inventados en copys generados | `PostLinkedIn` y `ResumenSemanal` contienen `source_ids` verificables (`msg_001`, `msg_002`, `msg_003`) | ✅ Superado |
-| **Contrato Canónico** | Cumplimiento estricto del paquete consolidado | Estructura 100% compatible con `PaqueteSalida` y `EvidenciaAlmacenamientoOCI` | ✅ Superado |
-| **Persistencia Cloud Segura** | Resiliencia en operaciones con el SDK de OCI | 18 pruebas unitarias con mock y verificación activa de lectura | ✅ Superado |
-
-
+Verás en la Terminal 2 cómo el worker procesa el lote y en segundos estará listo para ser curado en Streamlit.
 
 ---
 
-## 🖥️ Panel de curaduría (`ui/`)
+## 🖥️ 7. Ejemplos de la Interfaz de Usuario (Frontend en Streamlit)
 
-Documentación de entrega de Sergio (14/10/2026):
-[diseño e implementación del panel, ejecución, pruebas y pendientes](docs/panel-sergio.md).
-Incluye el estado de los PR #17/#18 y la coordinación pendiente con SQLite/OCI.
+La interfaz gráfica fue diseñada pensando en la ergonomía y productividad del gestor de comunidad. Cumple con la historia de usuario **HU-S1-004 (Flujo de revisión humana)** a través de un recorrido guiado en **4 pasos interactivos**:
 
-Interfaz Streamlit que cubre el requisito de UI del hackathon y la historia de usuario **[HU-S1-004 — Flujo de revisión humana](https://github.com/No-Country-simulation/Communitylab-G10-Grupo_34-/issues/8)**: cargar interacciones, revisar el análisis, editar/aprobar/rechazar los dos formatos de contenido y comprobar el estado de almacenamiento — en cuatro pasos (**Carga → Resultados → Edición y aprobación → Almacenamiento**), sobre el diseño aprobado por el equipo (verde petróleo `#00676B`, texto `#122039`/`#52627B`).
+### Paso 1: Carga y Admisión
+El curador sube un lote en formato JSON o CSV. La interfaz muestra de inmediato el desglose de admisión: cuántos mensajes se recibieron, cuántos fueron validados con éxito y cuántos fueron rechazados a la tabla de auditoría, indicando el motivo exacto de descarte (por ejemplo: *"El texto no puede estar vacío"*).
 
-Diseño aprobado por el equipo (mockup de referencia) frente a la implementación real:
-
-| Mockup aprobado | Implementación (pantalla "Resultados") |
+| Pantalla de Carga Inicial | Lote Admitido con Aislamiento de Descarte |
 | :---: | :---: |
-| <img src="docs/screenshots/00-mockup-aprobado.png" width="420" alt="Mockup aprobado de la pantalla Resultados"> | <img src="docs/screenshots/04-resultados.png" width="420" alt="Pantalla Resultados implementada"> |
-
-### Recorrido completo, paso a paso
-
-**1. Carga** — se sube un lote JSON o se usa el de ejemplo (`data/raw/lote_prueba_01.json`, 4 registros: 3 válidos + 1 vacío). El resumen muestra de inmediato cuántos se recibieron, validaron y rechazaron, con el motivo de cada rechazo.
-
-<img src="docs/screenshots/02-carga-cargada.png" width="760" alt="Pantalla de carga con el lote de ejemplo validado: 4 recibidos, 3 válidos, 1 rechazado">
-
-**2. Resultados** — análisis por mensaje (sentimiento, categoría, relevancia 0-6 y justificación), con filtro por categoría y el texto original siempre visible junto a la clasificación.
-
-<img src="docs/screenshots/04-resultados.png" width="760" alt="Pantalla de resultados con el análisis por mensaje">
-
-**3. Edición y aprobación** — editor con vista previa en vivo para el post de LinkedIn y el resumen semanal, cada uno con sus mensajes fuente consultables (trazabilidad de `source_ids`).
-
-<img src="docs/screenshots/06-edicion-borradores.png" width="760" alt="Pantalla de edición con el post de LinkedIn y su vista previa">
-
-El sistema exige nombre de revisor para cualquier decisión, y un motivo obligatorio para rechazar. Rechazar incrementa el número de revisión y vuelve el contenido a estado pendiente:
-
-<img src="docs/screenshots/07-rechazo.png" width="760" alt="Evidencia del flujo de rechazo con motivo obligatorio y la revisión marcada como Rechazado">
-
-**4. Almacenamiento** — al aprobar, el panel avanza automáticamente a este paso. Guarda el paquete y **comprueba activamente la lectura posterior** antes de marcarlo como verificado; es honesto sobre que es una copia local, no OCI real:
-
-<img src="docs/screenshots/09-almacenamiento-verificado.png" width="760" alt="Copia local guardada y verificada, con status_almacenamiento en no_iniciado para OCI">
-
-Más capturas (incluida la pantalla inicial vacía y el estado post-aprobación) en [`docs/screenshots/`](docs/screenshots/).
-
-### Archivos
-
-- `ui/app.py` — navegación, presentación y estado de sesión; consume `esquemas.py` y el validador oficial. El PR #17 corrige su import a `data_pipeline.validador`.
-- `ui/mock_pipeline.py` — clasificación y generación de copy **heurísticas**, no IA real. Es un reemplazo temporal de `ai_modules/` mientras ese módulo no exista.
-- `ui/storage_demo.py` — guarda el paquete **solo en disco local** (`data/oci_sim/`, no versionado) y verifica la lectura posterior con comparación de contenido, incluyendo reintento idéntico (idempotente) y rechazo ante colisión. **Nunca marca el paquete como guardado en OCI real**: `almacenamiento_oci.status_almacenamiento` permanece en `"no_iniciado"`. El cliente `storage/oci_client.py` ya existe, pero aún no está conectado al panel.
-- `ui/assets/communitylab-logo.png` — logo oficial del proyecto, integrado en la barra lateral.
-- Detalle adicional y notas de verificación en [`ui/README.md`](ui/README.md).
-
-**Pendiente antes de conectar con servicios reales:** reemplazar `ui/mock_pipeline.py` por los módulos reales de `ai_modules/`, y `ui/storage_demo.py` por `storage/oci_client.py`, sin cambiar los contratos de `esquemas.py` sin acuerdo previo del equipo.
-
----
-## 📚 Documentación Detallada del MVP
-
-Para profundizar en el diseño, contratos canónicos y normas de trabajo del equipo, consulta los documentos de referencia:
-
-- 🏛️ **[Arquitectura de CommunityLab](docs/arquitectura_de_communitylab.md):** Especificación completa de servicios, límites del sistema, flujos de datos, contratos JSON detallados, observabilidad con `structlog` y estrategia de persistencia en OCI Always Free.
-- ⚙️ **[Guía de Configuración y Entorno](docs/SETUP.md):** Manual detallado para la instalación y uso de `uv`, generación del lockfile y administración de dependencias.
-- 🤝 **[Guía de Contribución y Gobernanza](docs/CONTRIBUTING.md):** Estándares de ramas Git (`feat/<modulo>-<detalle>`), formato de commits, políticas de Pull Requests y regla estricta de modificación de `esquemas.py`.
-- 📐 **[Contratos Canónicos de Datos](esquemas.py):** Modelos Pydantic v2 centralizados que definen la única fuente de verdad para la ingesta, análisis cognitivo y paquetes de salida.
+| ![Pantalla de Carga](docs/screenshots/01-carga.png) | ![Lote Cargado](docs/screenshots/02-carga-cargada.png) |
 
 ---
 
-### 👥 Equipo 34 — Hackathon ONE G10 / NoCountry
-*Desarrollado para el Demo Day de 27 de octubre 2026.*
+### Paso 2: Resultados y Dashboard Analítico
+Presenta un resumen ejecutivo del lote: sentimiento predominante (con regla de desempate en `"Mixto"`), gráfico de polaridad y una tabla interactiva con todos los mensajes analizados. El usuario puede filtrar por categoría (`Logro`, `Duda`, `Dificultad`), inspeccionar el puntaje de relevancia (0 a 6) y abrir un panel lateral para leer la cita textual original del autor comunitario.
+
+| Dashboard de Métricas y Polaridad | Detalle de Mensajes y Scoring (0 a 6) |
+| :---: | :---: |
+| ![Inicio de Resultados](docs/screenshots/03-resultados-inicio.png) | ![Resultados con Análisis](docs/screenshots/04-resultados.png) |
+
+---
+
+### Paso 3: Edición y Aprobación de Copys
+Presenta los dos borradores generados simultáneamente:
+1. **Publicación para LinkedIn:** Incluye título, cuerpo editable, hashtags sugeridos y la lista inmutable de mensajes fuente que respaldan el texto (`source_ids`).
+2. **Resumen Semanal:** Síntesis estructurada con sección, titular y resumen ejecutivo.
+
+El curador puede editar los textos en tiempo real. Para aprobar o rechazar se exige la firma del revisor humano. En caso de rechazo, el sistema solicita un motivo obligatorio e incrementa el número de versión, protegiendo las decisiones previas.
+
+| Edición de Borrador para LinkedIn | Flujo de Rechazo con Motivo Obligatorio |
+| :---: | :---: |
+| ![Edición de Borradores](docs/screenshots/06-edicion-borradores.png) | ![Rechazo de Revisión](docs/screenshots/07-rechazo.png) |
+
+> 🔒 **Control de Concurrencia Optimista (HTTP 409):**  
+> Si dos curadores tienen la misma pantalla abierta y uno guarda una versión antes que el otro, el backend responde `HTTP 409 conflicto_revision`. El panel de Streamlit alerta al usuario y evita que se sobreescriban los cambios del colega.
+
+---
+
+### Paso 4: Almacenamiento y Evidencia en OCI
+Muestra el estado de persistencia en la nube. Si la revisión no ha sido sincronizada, ofrece el botón **«Sincronizar con OCI»**, conectando con Oracle Cloud Infrastructure mediante el SDK oficial y comprobando la integridad del hash SHA-256 byte a byte. Además, permite descargar el paquete final aprobado en formatos **JSON, Markdown o Texto Plano**.
+
+| Estado Post-Aprobación | Almacenamiento Verificado en Oracle Cloud |
+| :---: | :---: |
+| ![Aprobado](docs/screenshots/08-aprobado-almacenamiento.png) | ![Almacenamiento Verificado](docs/screenshots/09-almacenamiento-verificado.png) |
+
+---
+
+## 📊 8. Evidencias Técnicas y Criterios de Aceptación
+
+Para certificar la madurez de la solución ante los evaluadores del Hackathon, el repositorio incluye un conjunto exhaustivo de pruebas automatizadas:
+
+```bash
+uv run pytest -v
+```
+
+### Matriz de Criterios de Aceptación Arquitectónicos
+
+| Criterio / Requisito | Estado | Evidencia en el Código Fuente |
+|---|:---:|---|
+| **Admisión Asíncrona Resiliente** | ✅ **Superado** | `api/main.py`: `POST /interactions/process` responde `HTTP 202 Accepted` con hash de idempotencia SHA-256. |
+| **Aislamiento de Fallos en Dos Capas (R1 / M03)** | ✅ **Superado** | `data_pipeline/validador.py`: Mensajes vacíos se desvían a `auditoria_rechazados` sin tumbar los válidos. |
+| **Adaptador del Formato Oficial** | ✅ **Superado** | `adaptar_payload_oficial()`: Homologa JSON plano del jurado a contratos canónicos `IngestionLote`. |
+| **Política de Cero Hechos Inventados** | ✅ **Superado** | `orchestration/invariantes.py`: Exige `source_ids >= 1` matemáticamente vinculados a los mensajes del lote. |
+| **Scoring Objetivo de Relevancia (0 a 6)** | ✅ **Superado** | `esquemas.py`: `PuntuacionRelevancia` suma 3 dimensiones con `@model_validator(mode="after")`. |
+| **Generación Simultánea Dual (M01)** | ✅ **Superado** | `ai_modules/generador.py`: Genera `PostLinkedIn` y `ResumenSemanal` en una misma ejecución. |
+| **Fábrica Multi-Proveedor Desacoplada** | ✅ **Superado** | `ai_modules/multiprovider_agent.py`: Conmutación en caliente entre OpenAI, Gemini, Claude y Groq. |
+| **Persistencia Local Relacional (SQLite v2)** | ✅ **Superado** | `storage/local_db.py`: DDL de 19 tablas relacionales bajo modo WAL y PK compuesta `(run_id, source_id)`. |
+| **Verificación Activa en Oracle Cloud (M07 / R7)** | ✅ **Superado** | `storage/oci_client.py`: Verificación obligatoria post-subida con lectura byte a byte (`SHA-256`). |
+| **Frontera de Curaduría Desacoplada** | ✅ **Superado** | `api/rutas_curaduria.py` y `ui/api_client.py`: 10 operaciones HTTP con concurrencia optimista (`HTTP 409`). |
+
+---
+
+## 📚 9. Documentación Técnica del Proyecto
+
+Para profundizar en los detalles arquitectónicos, contratos JSON y manuales de integración, consulta los documentos complementarios en la carpeta [`docs/`](docs/):
+
+* 🏛️ **[Arquitectura de CommunityLab](docs/arquitectura_de_communitylab.md):** Documento maestro con diagramas de secuencia, especificación de contratos de datos, detalles del DDL SQLite y diseño de resiliencia.
+* ⚙️ **[Guía de Configuración y Entorno](docs/SETUP.md):** Instrucciones avanzadas para la gestión de dependencias con `uv` y resolución de incidencias.
+* 🤝 **[Guía de Contribución y Gobernanza](docs/CONTRIBUTING.md):** Convenciones de ramas Git (`feat/`, `fix/`, `docs/`), gobernanza de esquemas y políticas de Pull Requests.
+* 📐 **[Contratos Canónicos de Datos](esquemas.py):** Código fuente de los esquemas Pydantic v2 que constituyen la única fuente de verdad del sistema.
+
+---
+
+### 👥 Equipo 34 — Hackathon ONE G10 / No Country
+* **Proyecto:** CommunityLab
+* **Entrega:** Demo Day — 27 de Octubre de 2026
+* **Ecosistema:** Oracle Next Education (ONE), Alura Latam y No Country.
