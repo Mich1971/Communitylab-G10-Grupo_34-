@@ -53,7 +53,7 @@ ANTHROPIC_CACHE_TTL = "5m"
 MODELOS_POR_DEFECTO = {
     "openai": ("OPENAI_MODEL", "gpt-4o-mini"),
     "anthropic": ("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
-    "gemini": ("GEMINI_MODEL", "gemini-2.5-flash"),
+    "gemini": ("GEMINI_MODEL", "gemini-3.6-flash"),
 }
 
 
